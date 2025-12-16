@@ -1,0 +1,82 @@
+编写项目是严格遵守下方项目目录的结构，不能各种代码混放
+并且清楚写出注释以及代码作用
+
+project-root/
+│
+├── .env.example                 # 示例环境变量模板（不含敏感信息），可复制为 `.env`
+├── .env                         # 私有环境变量文件（本地开发），`settings.py` 自动加载
+├── frontend/                     # 存放前端所有业务逻辑代码（页面、组件、接口、工具），是用户能直接感知的 “交互层”。指挥关系：被package.json（依赖配置）支撑，内部各子目录按 “页面→组件→接口→工具” 的逻辑调用（页面指挥组件 / 接口，组件 / 接口调用工具）。
+│   ├── src/
+│   │   ├── api/                  # 封装所有与后端的 HTTP 请求，统一管理接口地址与参数，避免页面 / 组件直接写请求逻辑（减少重复代码，方便后期改接口地址）。
+│   │   │   ├── physicsApi.js     # 物理模拟专属接口，对应后端physics_router.py，上传物理图片、坐标、请求分割、发送生成模拟请求
+│   │   │   ├── mathApi.js        # 数学题讲解相关接口，数学讲解部分，请求 Manim 生成动画视频（目前无音频）。
+│   │   │   └── index.js          # 统一导出所有 API，把physicsApi.js和mathApi.js的方法导出，方便统一导入，不需修改，只导出新增的 API 即可。
+│   │   │
+│   │   ├── components/           # 通用组件       
+│   │   │   ├── PhysicsInputBox.jsx   # 物理模拟模式输入框样式、开始模拟按钮样式、点击上传图片监听器、拖拽上传图片监听器、框选点选区域交互效果（Segment Anything 交互）。
+│   │   │   ├── MathInputBox.jsx      # 数学解题模式文本输入框 ，图片上传，图片上传预览，创建讲解视频按钮
+│   │   │   ├── InputSelector.jsx     # 左上角切换模式按钮（物理模拟/数学解题），全局导航组件，放置在APP.js中
+│   │   │   ├── ErrorToast.jsx        # 统一错误提示机制
+│   │   │   ├── LoadingSpinner.jsx    # 加载状态，用于显示图片上传，请求处理时的等待状态
+│   │   │   └── styles.css            # 输入框与 Canvas 层样式
+│   │   │
+│   │   ├── pages/
+│   │   │   ├── PhysicsPage.jsx   # 显示物理模拟Canvas画布输入框，显示热门动画区域，显示右上角登录区域。
+│   │   │   └── MathPage.jsx      # 显示数学讲解动画输入框、显示热门动画区域，显示右上角登录区域。
+│   │   │
+│   │   ├── utils/
+│   │   │   ├── physicsEngine.js  # 前端物理引擎算法存储，PhysicsInputBox.jsx文件接收后端返回的物体模拟信息后调用该文件中的函数执行模拟。
+│   │   │   └── drawMask.js       # 接收PhysicsInputBox.jsx的调用，将物体边缘坐标并根据坐标连成线，绘制在物理模拟上传框Canvas画布上。
+│   │   │
+│   │   ├── App.jsx               # App.jsx：控制全局路由（如 /physics /math）。
+│   │   └── main.jsx              # main.jsx：应用入口，绑定 ReactDOM。
+│   │
+│   ├── index.html               # 应用入口 HTML 文件，加载 React 应用
+│   │
+│   │
+│   └── package.json
+│
+│
+├── backend/                      # Python 后端
+│   ├── app/
+│   │   ├── main.py               # FastAPI 启动入口,启动时提前加载一次SAM，把模型实例注入到segment_service.py中，后续请求直接复用实例。
+│   │   ├── routers/
+│   │   │   ├── physics_router.py # 接收前端物理模拟部分请求并分配任务给后端文件执行任务，并返回相应结果，处理物理模拟图片上传分配给multimodal_service.py、掩码生成并返回坐标分配给segment_service.py，前端发送生成模拟时分配给OpenCV 处理对象坐标并抠图调用opencv_service.py。
+│   │   │   └── math_router.py    # 接收前端数学解题部分请求并分配任务给后端文件执行任务，并返回相应结果，接收前端的数学图片以及需求分配任务给multimodal_manim_service.py，注意math_router.py 里用 BackgroundTasks，把渲染任务扔到后台，路由先返回响应，防止阻塞。
+│   │   ├── services/
+│   │   │   ├── segment_service.py    # 调用 Segment Anything 模型，根据前端坐标生成掩码，后调用mask_utils.py中的函数通过掩码生成物体外圈坐标，通过路由返回给前端，前端处理后给用户呈现选中物体亮线的效果。 
+│   │   │   ├── opencv_service.py     # 使用 OpenCV计算机视觉库提取几何结构（斜面角度、物体边界坐标、以及抠出物体样子作为精灵图），并将结果提交给analog_info_gather_service.py。
+│   │   │   ├── multimodal_service.py # 调用pictures_utils.py处理图片后将图像信息发给多模态大模型（识别题目信息、摩擦系数、质量等）
+│   │   │   ├── multimodal_manim_service.py # 调用pictures_utils.py中的函数处理图片后将图像信息发给多模态大模型（识别题目信息，用户需求），返回带时间戳的语音脚本和动画脚本（当前只有动画脚本，没有语音脚本）
+│   │   │   ├── manim_service.py      # 接收multimodal_manim_service.py返回的代码以及语音脚本，将语音脚本发给tts,并接收返回的语音文件，将动画脚本发给Claude编程模型，并执行渲染（注意点：渲染错误时将错误代码使用ai进行修复，异步渲染防止阻塞）
+│   │   │   └── ffmpeg_service.py     # 使用ffmpeg合并音频视频，并通过路由返回给前端。
+│   │   │
+│   │   ├── models/
+│   │   │   ├── physics_schema.py     # 用户上传图片、掩码、属性等字段
+│   │   │   ├── math_schema.py        # 数学讲解接口字段（题目文本、图片路径）
+│   │   │   └── response_schema.py    # 统一返回格式（状态码、消息、结果数据）
+│   │   │
+│   │   ├── utils/                    # 后端工具函数，处于被调用状态
+│   │   │   ├── file_utils.py         # 将前端上传的图片上传到uplods目录下。
+│   │   │   ├── pictures_utils.py     # 接受multimodal_service.py等文件的调用去进行图片格式转换，将图片转换为各方可以接受的文件，如png,jpg转换为base64编码格式。
+│   │   │   ├── mask_utils.py         # 接受opencv_service.py，segment_service.py等文件的调用，将掩码转换为物体周围坐标
+│   │   │   ├── prompt_utils.py       # 存放物理模拟大模型使用的提示词
+│   │   │   ├── prompt_manim_utils.py # 存放manim演示视频大模型使用的提示词
+│   │   │   └── logger.py             # 统一日志系统（用于调试）
+│   │   │
+│   │   └── config/
+│   │      └── settings.py           # 统一配置中心：自动加载 project-root/.env 与系统环境变量，集中管理模型路径、端口、CORS、数据库配置、端点与密钥；提供默认值与类型校验与路径规范化，避免硬编码
+│   │
+│   ├── uploads/                      # 涉及到暂存用户上传的物理图片、数学图片
+│   │   ├── physics/                  # 物理模拟图片暂存目录
+│   │   └── math/                     # 数学解题图片暂存目录
+│   │
+│   ├── tests/
+│   │   ├── test_segment.py           # 测试 Segment Anything 掩码生成
+│   │   ├── test_opencv.py            # 测试几何信息提取
+│   │   └── test_api.py               # 测试 API 是否返回正确结果
+│   │
+│   ├── requirements.txt      # 锁定依赖版本（Manim、OpenCV、Segment Anything 容易冲突）＋ .env 支持（python-dotenv）
+│   └── README.md                     
+│
+└── README.md               

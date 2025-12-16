@@ -1,0 +1,20 @@
+source myenv/bin/activate
+uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+pip install -i https://pypi.tuna.tsinghua.edu.cn/simple 
+settings.py .env.example .env .gitignore InputSelector.jsx App.jsx .env.local
+cd "/www/wwwroot/physmath.cn/my--project-1 - 副本 - 副本"
+cd "/www/wwwroot/physmath.cn/my--project-1 - 副本 - 副本/frontend"
+cd "/www/wwwroot/physmath.cn/my--project-1 - 副本 - 副本/backend"
+cd "/www/wwwroot/physmath.cn/my--project-1 - 副本 - 副本"
+screen -S frontend 创建一个新的终端
+screen -S backend 创建一个新的终端
+screen -r frontend或者screen -r backend 将终端挂后台
+Ctrl+A+D 将终端挂后台
+/init 初始化项目
+/clear 清除缓存，适用于执行新的目录
+/think 第一级别思考
+/think hard 第二级别思考
+/think harder 第三级别思考
+/ 第四级别思考
+/compack 压缩缓存
+# 输入井号后，可在后面输入内容输入的内容会变成ai的长期记忆

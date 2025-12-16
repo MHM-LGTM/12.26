@@ -1,0 +1,28 @@
+<!--
+前端入口 HTML 文件
+---------------------------------
+功能：
+- 提供 React 应用挂载点 `#root`；由 Vite 注入打包脚本。
+- 定义基础视口与字符编码设置。
+
+后续扩展：
+- 可在此处引入全局样式、图标字体、以及 PWA 相关的 meta/link 标签。
+-->
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <!--
+      本次修改：添加 favicon，修复浏览器默认请求 /favicon.ico 的 404 提示
+      说明：使用内联 SVG data URL，避免额外静态文件；可按需替换为项目 Logo
+    -->
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='8' y='8' width='48' height='48' rx='12' fill='%230369a1'/%3E%3Ctext x='32' y='40' font-size='24' text-anchor='middle' fill='white' font-family='Segoe UI, Arial'%3EP%3C/text%3E%3C/svg%3E" />
+    <title>Physics & Math Demo</title>
+    <script type="module" crossorigin src="/assets/index-CLiwcclp.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-By8e_4HL.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+  </html>

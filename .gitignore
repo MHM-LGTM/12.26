@@ -1,0 +1,6 @@
+backend/app/checkpoints/
+frontend/node_modules/
+myenv/
+Python-3.12.3/
+.env
+frontend/.env.local
