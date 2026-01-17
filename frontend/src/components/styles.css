@@ -47,8 +47,25 @@ body {
   border: 2px dashed var(--border);
   background: #fff;
   display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  overflow: hidden;
+}
+
+.upload-split-left {
+  flex: 2 1 0%;
+  min-width: 0;
+  position: relative;
+  display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.upload-split-right {
+  flex: 1 1 0%;
+  min-width: 0;
+  position: relative;
+  border-left: 2px dashed var(--border);
 }
 
 .upload-text {

@@ -29,8 +29,7 @@
 - `ARK_BASE_URL`：豆包 Ark 地域端点（默认北京 `https://ark.cn-beijing.volces.com/api/v3`）。
 - `ARK_API_KEY`：豆包 Ark API Key（必填）。
 - `DOUBAO_MODEL_ID`：使用的模型 ID（默认 `doubao-seed-1-6-flash-250828`）。
-- `SAM_MODEL_TYPE`：`vit_b | vit_l | vit_h`。
-- `SAM_CHECKPOINT_PATH`：SAM 权重文件路径（默认 `backend/app/models/sam_vit_l_0b3195.pth`）。
+- `SAM_CHECKPOINT_PATH`：SAM 权重文件路径（默认 `backend/app/checkpoints/sam2_hiera_base_plus.pt`）。
 - `SAM_DEVICE`：`cpu` 或 `cuda`。
 
 ## 常见问题

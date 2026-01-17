@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>轴心点与轻杆</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      background: #1e293b;
+      font-family: sans-serif;
+    }
+    
+    .container {
+      text-align: center;
+    }
+    
+    h2 {
+      color: #f1f5f9;
+      margin-bottom: 20px;
+    }
+    
+    svg {
+      background: #0f172a;
+      border-radius: 12px;
+      border: 1px solid #334155;
+    }
+    
+    /* 轴心点样式 */
+    .pivot {
+      fill: #f97316;
+      stroke: #ea580c;
+      stroke-width: 2;
+    }
+    
+    .pivot-center {
+      fill: white;
+    }
+    
+    /* 轻杆样式 */
+    .rod {
+      stroke: #3b82f6;
+      stroke-width: 6;
+      stroke-linecap: round;
+    }
+    
+    /* 杆端点样式 */
+    .rod-end {
+      fill: #22d3ee;
+      stroke: #0891b2;
+      stroke-width: 2;
+      cursor: grab;
+    }
+    
+    .rod-end:active {
+      cursor: grabbing;
+    }
+    
+    .info {
+      color: #94a3b8;
+      margin-top: 15px;
+      font-size: 14px;
+    }
+    
+    .angle-display {
+      color: #fbbf24;
+      font-size: 18px;
+      margin-top: 10px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>轴心点与轻杆</h2>
+    
+    <svg id="canvas" width="400" height="400">
+      <!-- 轻杆 -->
+      <line id="rod" class="rod" x1="200" y1="200" x2="200" y2="50"></line>
+      
+      <!-- 轴心点 -->
+      <circle class="pivot" cx="200" cy="200" r="12"></circle>
+      <circle class="pivot-center" cx="200" cy="200" r="4"></circle>
+      
+      <!-- 杆端点（可拖拽） -->
+      <circle id="rodEnd" class="rod-end" cx="200" cy="50" r="14"></circle>
+    </svg>
+    
+    <div class="angle-display">角度: <span id="angleText">0</span>°</div>
+    <p class="info">拖拽蓝色端点旋转杆子</p>
+  </div>
+
+  <script>
+    const svg = document.getElementById('canvas');
+    const rod = document.getElementById('rod');
+    const rodEnd = document.getElementById('rodEnd');
+    const angleText = document.getElementById('angleText');
+    
+    // 轴心点位置
+    const pivotX = 200;
+    const pivotY = 200;
+    
+    // 杆长度
+    const rodLength = 150;
+    
+    let isDragging = false;
+    
+    // 更新杆的位置
+    function updateRod(angle) {
+      const rad = angle * Math.PI / 180;
+      const endX = pivotX + rodLength * Math.sin(rad);
+      const endY = pivotY - rodLength * Math.cos(rad);
+      
+      rod.setAttribute('x2', endX);
+      rod.setAttribute('y2', endY);
+      rodEnd.setAttribute('cx', endX);
+      rodEnd.setAttribute('cy', endY);
+      
+      angleText.textContent = angle.toFixed(1);
+    }
+    
+    // 获取鼠标/触摸位置对应的角度
+    function getAngle(clientX, clientY) {
+      const rect = svg.getBoundingClientRect();
+      const x = clientX - rect.left - pivotX;
+      const y = clientY - rect.top - pivotY;
+      
+      // 计算角度（以向上为0度）
+      let angle = Math.atan2(x, -y) * 180 / Math.PI;
+      return angle;
+    }
+    
+    // 鼠标事件
+    rodEnd.addEventListener('mousedown', () => isDragging = true);
+    document.addEventListener('mouseup', () => isDragging = false);
+    document.addEventListener('mousemove', (e) => {
+      if (isDragging) {
+        const angle = getAngle(e.clientX, e.clientY);
+        updateRod(angle);
+      }
+    });
+    
+    // 触摸事件
+    rodEnd.addEventListener('touchstart', (e) => {
+      isDragging = true;
+      e.preventDefault();
+    });
+    document.addEventListener('touchend', () => isDragging = false);
+    document.addEventListener('touchmove', (e) => {
+      if (isDragging) {
+        const touch = e.touches[0];
+        const angle = getAngle(touch.clientX, touch.clientY);
+        updateRod(angle);
+      }
+    });
+  </script>
+</body>
+</html>

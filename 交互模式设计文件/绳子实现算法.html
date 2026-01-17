@@ -1,0 +1,1165 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Matter.js 绳子物理系统</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Noto+Sans+SC:wght@400;500;700&display=swap');
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        :root {
+            --bg-primary: #0a0a0f;
+            --bg-secondary: #12121a;
+            --bg-tertiary: #1a1a25;
+            --accent-cyan: #00f5ff;
+            --accent-magenta: #ff00aa;
+            --accent-yellow: #ffcc00;
+            --text-primary: #e8e8f0;
+            --text-secondary: #888899;
+            --border-color: #2a2a3a;
+        }
+        
+        body {
+            font-family: 'Noto Sans SC', 'JetBrains Mono', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        /* 侧边工具栏 */
+        .toolbar {
+            width: 280px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            z-index: 100;
+        }
+        
+        .toolbar-header {
+            text-align: center;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .toolbar-header h1 {
+            font-size: 1.2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-magenta));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+        
+        .toolbar-header p {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            font-family: 'JetBrains Mono', monospace;
+        }
+        
+        .tool-section {
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            padding: 16px;
+            border: 1px solid var(--border-color);
+        }
+        
+        .tool-section h3 {
+            font-size: 0.7rem;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+        }
+        
+        .tool-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        
+        .tool-btn {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .tool-btn:hover {
+            background: var(--bg-primary);
+            border-color: var(--accent-cyan);
+        }
+        
+        .tool-btn.active {
+            background: linear-gradient(135deg, rgba(0, 245, 255, 0.1), rgba(255, 0, 170, 0.1));
+            border-color: var(--accent-cyan);
+            box-shadow: 0 0 20px rgba(0, 245, 255, 0.2);
+        }
+        
+        .tool-btn .icon {
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+        }
+        
+        /* 参数控制 */
+        .param-group {
+            margin-top: 12px;
+        }
+        
+        .param-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8rem;
+            margin-bottom: 6px;
+            color: var(--text-secondary);
+        }
+        
+        .param-value {
+            color: var(--accent-cyan);
+            font-family: 'JetBrains Mono', monospace;
+        }
+        
+        input[type="range"] {
+            width: 100%;
+            height: 4px;
+            background: var(--bg-primary);
+            border-radius: 2px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+        
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            background: var(--accent-cyan);
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 0 10px var(--accent-cyan);
+        }
+        
+        /* 动作按钮 */
+        .action-btn {
+            padding: 12px 20px;
+            background: transparent;
+            border: 1px solid var(--accent-magenta);
+            color: var(--accent-magenta);
+            border-radius: 8px;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            font-family: 'Noto Sans SC', sans-serif;
+        }
+        
+        .action-btn:hover {
+            background: var(--accent-magenta);
+            color: var(--bg-primary);
+        }
+        
+        .action-btn.primary {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-magenta));
+            border: none;
+            color: var(--bg-primary);
+            font-weight: 600;
+        }
+        
+        .action-btn.primary:hover {
+            box-shadow: 0 0 30px rgba(0, 245, 255, 0.4);
+        }
+        
+        /* 画布区域 */
+        .canvas-container {
+            flex: 1;
+            position: relative;
+            background: 
+                radial-gradient(circle at 30% 30%, rgba(0, 245, 255, 0.03) 0%, transparent 50%),
+                radial-gradient(circle at 70% 70%, rgba(255, 0, 170, 0.03) 0%, transparent 50%),
+                var(--bg-primary);
+        }
+        
+        #physics-canvas {
+            display: block;
+        }
+        
+        /* 状态提示 */
+        .status-bar {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            padding: 12px 24px;
+            border-radius: 30px;
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+        
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-cyan);
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; box-shadow: 0 0 5px var(--accent-cyan); }
+            50% { opacity: 0.5; box-shadow: 0 0 15px var(--accent-cyan); }
+        }
+        
+        /* 信息面板 */
+        .info-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            padding: 16px;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            min-width: 200px;
+        }
+        
+        .info-panel h4 {
+            color: var(--accent-yellow);
+            margin-bottom: 12px;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .info-row:last-child {
+            border-bottom: none;
+        }
+        
+        .info-label {
+            color: var(--text-secondary);
+        }
+        
+        .info-value {
+            color: var(--accent-cyan);
+            font-family: 'JetBrains Mono', monospace;
+        }
+        
+        /* 连接提示 */
+        .connection-hint {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 245, 255, 0.1);
+            border: 2px dashed var(--accent-cyan);
+            padding: 40px 60px;
+            border-radius: 16px;
+            text-align: center;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        .connection-hint.visible {
+            opacity: 1;
+        }
+        
+        .connection-hint h3 {
+            color: var(--accent-cyan);
+            margin-bottom: 8px;
+        }
+        
+        .connection-hint p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+        
+        /* 色块说明 */
+        .legend {
+            margin-top: auto;
+            padding-top: 20px;
+            border-top: 1px solid var(--border-color);
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.8rem;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+        }
+        
+        .legend-color {
+            width: 16px;
+            height: 16px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="toolbar">
+            <div class="toolbar-header">
+                <h1>🔗 绳子物理引擎</h1>
+                <p>Verlet Integration + Matter.js</p>
+            </div>
+            
+            <div class="tool-section">
+                <h3>工具选择</h3>
+                <div class="tool-buttons">
+                    <button class="tool-btn active" data-tool="select" onclick="setTool('select')">
+                        <span class="icon">👆</span>
+                        <span>选择 / 拖拽</span>
+                    </button>
+                    <button class="tool-btn" data-tool="rope" onclick="setTool('rope')">
+                        <span class="icon">🪢</span>
+                        <span>绳子连接</span>
+                    </button>
+                    <button class="tool-btn" data-tool="cut" onclick="setTool('cut')">
+                        <span class="icon">✂️</span>
+                        <span>剪断绳子</span>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="tool-section">
+                <h3>绳子参数</h3>
+                <div class="param-group">
+                    <div class="param-label">
+                        <span>绳子段数</span>
+                        <span class="param-value" id="segments-value">15</span>
+                    </div>
+                    <input type="range" id="segments" min="5" max="30" value="15" oninput="updateParam('segments')">
+                </div>
+                <div class="param-group">
+                    <div class="param-label">
+                        <span>刚度系数</span>
+                        <span class="param-value" id="stiffness-value">0.9</span>
+                    </div>
+                    <input type="range" id="stiffness" min="0.1" max="1" step="0.05" value="0.9" oninput="updateParam('stiffness')">
+                </div>
+                <div class="param-group">
+                    <div class="param-label">
+                        <span>阻尼系数</span>
+                        <span class="param-value" id="damping-value">0.98</span>
+                    </div>
+                    <input type="range" id="damping" min="0.9" max="1" step="0.01" value="0.98" oninput="updateParam('damping')">
+                </div>
+            </div>
+            
+            <div class="tool-section">
+                <h3>场景控制</h3>
+                <div class="tool-buttons">
+                    <button class="action-btn primary" onclick="addRandomBody()">
+                        添加刚体
+                    </button>
+                    <button class="action-btn" onclick="clearRopes()">
+                        清除所有绳子
+                    </button>
+                    <button class="action-btn" onclick="resetScene()">
+                        重置场景
+                    </button>
+                </div>
+            </div>
+            
+            <div class="legend">
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #00f5ff;"></div>
+                    <span>可连接的刚体</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #ff00aa;"></div>
+                    <span>已选择的刚体</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: linear-gradient(90deg, #ffcc00, #ff6600);"></div>
+                    <span>绳子</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="canvas-container">
+            <canvas id="physics-canvas"></canvas>
+            
+            <div class="info-panel">
+                <h4>📊 实时状态</h4>
+                <div class="info-row">
+                    <span class="info-label">刚体数量</span>
+                    <span class="info-value" id="body-count">0</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">绳子数量</span>
+                    <span class="info-value" id="rope-count">0</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">FPS</span>
+                    <span class="info-value" id="fps">60</span>
+                </div>
+            </div>
+            
+            <div class="connection-hint" id="connection-hint">
+                <h3>🪢 绳子连接模式</h3>
+                <p>点击一个或两个刚体创建绳子连接</p>
+            </div>
+            
+            <div class="status-bar">
+                <div class="status-indicator"></div>
+                <span id="status-text">选择模式 - 拖拽刚体移动</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ========================================
+        // Matter.js 引擎设置
+        // ========================================
+        const { Engine, Render, Runner, Bodies, Body, Composite, Mouse, MouseConstraint, Events } = Matter;
+        
+        const canvas = document.getElementById('physics-canvas');
+        const container = document.querySelector('.canvas-container');
+        
+        // 设置画布尺寸
+        function resizeCanvas() {
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+        }
+        resizeCanvas();
+        window.addEventListener('resize', () => {
+            resizeCanvas();
+            // 重新创建边界
+            createBounds();
+        });
+        
+        // 创建引擎
+        const engine = Engine.create({
+            gravity: { x: 0, y: 1 }
+        });
+        
+        // 获取画布上下文
+        const ctx = canvas.getContext('2d');
+        
+        // ========================================
+        // Verlet 绳子系统
+        // ========================================
+        class VerletRope {
+            constructor(startX, startY, endX, endY, segments, stiffness, damping) {
+                this.segments = segments;
+                this.stiffness = stiffness;
+                this.damping = damping;
+                this.points = [];
+                this.constraints = [];
+                this.attachments = { start: null, end: null };
+                this.id = Math.random().toString(36).substr(2, 9);
+                
+                // 创建点
+                const dx = (endX - startX) / segments;
+                const dy = (endY - startY) / segments;
+                
+                for (let i = 0; i <= segments; i++) {
+                    this.points.push({
+                        x: startX + dx * i,
+                        y: startY + dy * i,
+                        oldX: startX + dx * i,
+                        oldY: startY + dy * i,
+                        pinned: false
+                    });
+                }
+                
+                // 创建约束（每个点与下一个点的距离）
+                // 乘以1.4让绳子初始更长更松弛
+                const segmentLength = Math.sqrt(dx * dx + dy * dy) * 1.4;
+                for (let i = 0; i < segments; i++) {
+                    this.constraints.push({
+                        p1: i,
+                        p2: i + 1,
+                        length: segmentLength
+                    });
+                }
+            }
+            
+            // 附着到刚体
+            attachToBody(bodyData, isStart) {
+                if (isStart) {
+                    this.attachments.start = bodyData;
+                    this.points[0].pinned = true;
+                } else {
+                    this.attachments.end = bodyData;
+                    this.points[this.points.length - 1].pinned = true;
+                }
+            }
+            
+            // 更新物理
+            update(gravity = { x: 0, y: 0.5 }) {
+                // 更新附着点位置
+                if (this.attachments.start) {
+                    const body = this.attachments.start.body;
+                    const offset = this.attachments.start.offset;
+                    const cos = Math.cos(body.angle);
+                    const sin = Math.sin(body.angle);
+                    this.points[0].x = body.position.x + offset.x * cos - offset.y * sin;
+                    this.points[0].y = body.position.y + offset.x * sin + offset.y * cos;
+                    this.points[0].oldX = this.points[0].x;
+                    this.points[0].oldY = this.points[0].y;
+                }
+                
+                if (this.attachments.end) {
+                    const body = this.attachments.end.body;
+                    const offset = this.attachments.end.offset;
+                    const cos = Math.cos(body.angle);
+                    const sin = Math.sin(body.angle);
+                    const lastIdx = this.points.length - 1;
+                    this.points[lastIdx].x = body.position.x + offset.x * cos - offset.y * sin;
+                    this.points[lastIdx].y = body.position.y + offset.x * sin + offset.y * cos;
+                    this.points[lastIdx].oldX = this.points[lastIdx].x;
+                    this.points[lastIdx].oldY = this.points[lastIdx].y;
+                }
+                
+                // Verlet 积分
+                for (let point of this.points) {
+                    if (point.pinned) continue;
+                    
+                    const vx = (point.x - point.oldX) * this.damping;
+                    const vy = (point.y - point.oldY) * this.damping;
+                    
+                    point.oldX = point.x;
+                    point.oldY = point.y;
+                    point.x += vx + gravity.x;
+                    point.y += vy + gravity.y;
+                    
+                    // 边界碰撞
+                    if (point.y > canvas.height - 20) {
+                        point.y = canvas.height - 20;
+                        point.oldY = point.y + vy * 0.5;
+                    }
+                    if (point.x < 20) {
+                        point.x = 20;
+                        point.oldX = point.x + vx * 0.5;
+                    }
+                    if (point.x > canvas.width - 20) {
+                        point.x = canvas.width - 20;
+                        point.oldX = point.x + vx * 0.5;
+                    }
+                }
+                
+                // 约束求解（多次迭代提高稳定性）
+                for (let iter = 0; iter < 5; iter++) {
+                    for (let c of this.constraints) {
+                        const p1 = this.points[c.p1];
+                        const p2 = this.points[c.p2];
+                        
+                        const dx = p2.x - p1.x;
+                        const dy = p2.y - p1.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        const diff = (c.length - dist) / dist * this.stiffness;
+                        
+                        const offsetX = dx * diff * 0.5;
+                        const offsetY = dy * diff * 0.5;
+                        
+                        if (!p1.pinned) {
+                            p1.x -= offsetX;
+                            p1.y -= offsetY;
+                        }
+                        if (!p2.pinned) {
+                            p2.x += offsetX;
+                            p2.y += offsetY;
+                        }
+                    }
+                }
+                
+                // 对连接的刚体施加力
+                this.applyForceToBody();
+            }
+            
+            // 对刚体施加绳子拉力（只在绳子被拉紧时）
+            applyForceToBody() {
+                // 计算绳子当前总长度
+                let currentLength = 0;
+                for (let i = 0; i < this.points.length - 1; i++) {
+                    const dx = this.points[i + 1].x - this.points[i].x;
+                    const dy = this.points[i + 1].y - this.points[i].y;
+                    currentLength += Math.sqrt(dx * dx + dy * dy);
+                }
+                
+                // 计算绳子的原始长度
+                let restLength = 0;
+                for (let c of this.constraints) {
+                    restLength += c.length;
+                }
+                
+                // 只有当绳子被拉伸时才施加力
+                const stretch = currentLength - restLength;
+                if (stretch <= 0) return; // 绳子松弛，不施力
+                
+                // 张力与拉伸量成正比
+                const tensionForce = stretch * 0.0003;
+                
+                if (this.attachments.start && this.attachments.start.body) {
+                    const body = this.attachments.start.body;
+                    const p0 = this.points[0];
+                    const p1 = this.points[1];
+                    const dx = p1.x - p0.x;
+                    const dy = p1.y - p0.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist > 0) {
+                        const fx = (dx / dist) * tensionForce;
+                        const fy = (dy / dist) * tensionForce;
+                        Body.applyForce(body, body.position, { x: fx, y: fy });
+                    }
+                }
+                
+                if (this.attachments.end && this.attachments.end.body) {
+                    const body = this.attachments.end.body;
+                    const lastIdx = this.points.length - 1;
+                    const pLast = this.points[lastIdx];
+                    const pPrev = this.points[lastIdx - 1];
+                    const dx = pPrev.x - pLast.x;
+                    const dy = pPrev.y - pLast.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist > 0) {
+                        const fx = (dx / dist) * tensionForce;
+                        const fy = (dy / dist) * tensionForce;
+                        Body.applyForce(body, body.position, { x: fx, y: fy });
+                    }
+                }
+            }
+            
+            // 渲染
+            render(ctx) {
+                ctx.beginPath();
+                ctx.moveTo(this.points[0].x, this.points[0].y);
+                
+                // 使用贝塞尔曲线绘制平滑的绳子
+                for (let i = 1; i < this.points.length - 1; i++) {
+                    const xc = (this.points[i].x + this.points[i + 1].x) / 2;
+                    const yc = (this.points[i].y + this.points[i + 1].y) / 2;
+                    ctx.quadraticCurveTo(this.points[i].x, this.points[i].y, xc, yc);
+                }
+                
+                const lastIdx = this.points.length - 1;
+                ctx.lineTo(this.points[lastIdx].x, this.points[lastIdx].y);
+                
+                // 绳子样式 - 渐变色
+                const gradient = ctx.createLinearGradient(
+                    this.points[0].x, this.points[0].y,
+                    this.points[lastIdx].x, this.points[lastIdx].y
+                );
+                gradient.addColorStop(0, '#ffcc00');
+                gradient.addColorStop(0.5, '#ff8800');
+                gradient.addColorStop(1, '#ff4400');
+                
+                ctx.strokeStyle = gradient;
+                ctx.lineWidth = 4;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.stroke();
+                
+                // 绘制发光效果
+                ctx.strokeStyle = 'rgba(255, 200, 0, 0.3)';
+                ctx.lineWidth = 8;
+                ctx.stroke();
+                
+                // 绘制端点
+                for (let attachment of [this.attachments.start, this.attachments.end]) {
+                    if (attachment) {
+                        const idx = attachment === this.attachments.start ? 0 : lastIdx;
+                        ctx.beginPath();
+                        ctx.arc(this.points[idx].x, this.points[idx].y, 6, 0, Math.PI * 2);
+                        ctx.fillStyle = '#ff00aa';
+                        ctx.fill();
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                    }
+                }
+            }
+            
+            // 检测点是否在绳子附近（用于剪断）
+            isNearPoint(x, y, threshold = 15) {
+                for (let i = 0; i < this.points.length - 1; i++) {
+                    const p1 = this.points[i];
+                    const p2 = this.points[i + 1];
+                    const dist = this.pointToSegmentDistance(x, y, p1.x, p1.y, p2.x, p2.y);
+                    if (dist < threshold) return true;
+                }
+                return false;
+            }
+            
+            pointToSegmentDistance(px, py, x1, y1, x2, y2) {
+                const dx = x2 - x1;
+                const dy = y2 - y1;
+                const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy)));
+                const nearX = x1 + t * dx;
+                const nearY = y1 + t * dy;
+                return Math.sqrt((px - nearX) ** 2 + (py - nearY) ** 2);
+            }
+        }
+        
+        // ========================================
+        // 全局状态
+        // ========================================
+        let currentTool = 'select';
+        let ropes = [];
+        let selectedBody = null;
+        let ropeStartBody = null;
+        let bounds = [];
+        let interactiveBodies = [];
+        
+        // 绳子参数
+        let ropeParams = {
+            segments: 15,
+            stiffness: 0.9,
+            damping: 0.98
+        };
+        
+        // FPS 计算
+        let lastTime = performance.now();
+        let frameCount = 0;
+        let fps = 60;
+        
+        // ========================================
+        // 创建边界
+        // ========================================
+        function createBounds() {
+            // 移除旧边界
+            for (let bound of bounds) {
+                Composite.remove(engine.world, bound);
+            }
+            bounds = [];
+            
+            const thickness = 40;
+            const w = canvas.width;
+            const h = canvas.height;
+            
+            bounds = [
+                Bodies.rectangle(w / 2, h + thickness / 2, w + thickness * 2, thickness, { isStatic: true, label: 'ground' }),
+                Bodies.rectangle(w / 2, -thickness / 2, w + thickness * 2, thickness, { isStatic: true, label: 'ceiling' }),
+                Bodies.rectangle(-thickness / 2, h / 2, thickness, h, { isStatic: true, label: 'leftWall' }),
+                Bodies.rectangle(w + thickness / 2, h / 2, thickness, h, { isStatic: true, label: 'rightWall' })
+            ];
+            
+            Composite.add(engine.world, bounds);
+        }
+        
+        // ========================================
+        // 创建刚体
+        // ========================================
+        function createBody(x, y, type = 'random') {
+            const colors = ['#00f5ff', '#ff00aa', '#00ff88', '#8855ff', '#ff5544'];
+            const color = colors[Math.floor(Math.random() * colors.length)];
+            
+            let body;
+            const types = type === 'random' ? ['circle', 'rectangle', 'polygon'][Math.floor(Math.random() * 3)] : type;
+            
+            switch (types) {
+                case 'circle':
+                    body = Bodies.circle(x, y, 25 + Math.random() * 20, {
+                        restitution: 0.6,
+                        friction: 0.1,
+                        render: { fillStyle: color }
+                    });
+                    break;
+                case 'rectangle':
+                    body = Bodies.rectangle(x, y, 40 + Math.random() * 40, 40 + Math.random() * 40, {
+                        restitution: 0.6,
+                        friction: 0.1,
+                        render: { fillStyle: color }
+                    });
+                    break;
+                case 'polygon':
+                    body = Bodies.polygon(x, y, Math.floor(3 + Math.random() * 4), 25 + Math.random() * 15, {
+                        restitution: 0.6,
+                        friction: 0.1,
+                        render: { fillStyle: color }
+                    });
+                    break;
+            }
+            
+            body.customColor = color;
+            interactiveBodies.push(body);
+            Composite.add(engine.world, body);
+            updateStats();
+            return body;
+        }
+        
+        // ========================================
+        // 初始化场景
+        // ========================================
+        function initScene() {
+            createBounds();
+            
+            // 创建一些初始刚体
+            for (let i = 0; i < 5; i++) {
+                const x = 150 + Math.random() * (canvas.width - 400);
+                const y = 100 + Math.random() * (canvas.height - 300);
+                createBody(x, y);
+            }
+        }
+        
+        // ========================================
+        // 鼠标交互
+        // ========================================
+        const mouse = Mouse.create(canvas);
+        const mouseConstraint = MouseConstraint.create(engine, {
+            mouse: mouse,
+            constraint: {
+                stiffness: 0.2,
+                render: { visible: false }
+            }
+        });
+        
+        Composite.add(engine.world, mouseConstraint);
+        
+        // 处理鼠标事件
+        canvas.addEventListener('mousedown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            if (currentTool === 'rope') {
+                handleRopeClick(x, y);
+            } else if (currentTool === 'cut') {
+                handleCutClick(x, y);
+            }
+        });
+        
+        // 绳子连接处理
+        function handleRopeClick(x, y) {
+            const clickedBody = getBodyAtPosition(x, y);
+            
+            if (!clickedBody) {
+                // 点击空白处 - 创建一端固定在空中的绳子
+                if (ropeStartBody) {
+                    createRope(ropeStartBody, null, x, y);
+                    ropeStartBody = null;
+                    selectedBody = null;
+                    updateStatus();
+                }
+                return;
+            }
+            
+            if (!ropeStartBody) {
+                // 选择第一个刚体
+                ropeStartBody = clickedBody;
+                selectedBody = clickedBody;
+                updateStatus('已选择第一个刚体，点击第二个刚体或空白处创建绳子');
+            } else if (clickedBody !== ropeStartBody) {
+                // 选择第二个刚体，创建绳子
+                createRope(ropeStartBody, clickedBody);
+                ropeStartBody = null;
+                selectedBody = null;
+                updateStatus();
+            }
+        }
+        
+        // 剪断绳子处理
+        function handleCutClick(x, y) {
+            for (let i = ropes.length - 1; i >= 0; i--) {
+                if (ropes[i].isNearPoint(x, y)) {
+                    ropes.splice(i, 1);
+                    updateStats();
+                    return;
+                }
+            }
+        }
+        
+        // 获取指定位置的刚体
+        function getBodyAtPosition(x, y) {
+            for (let body of interactiveBodies) {
+                if (Matter.Bounds.contains(body.bounds, { x, y })) {
+                    if (Matter.Vertices.contains(body.vertices, { x, y })) {
+                        return body;
+                    }
+                }
+            }
+            return null;
+        }
+        
+        // 创建绳子
+        function createRope(startBody, endBody = null, endX = null, endY = null) {
+            const startPos = startBody.position;
+            let targetX, targetY;
+            
+            if (endBody) {
+                targetX = endBody.position.x;
+                targetY = endBody.position.y;
+            } else {
+                targetX = endX;
+                targetY = endY;
+            }
+            
+            const rope = new VerletRope(
+                startPos.x, startPos.y,
+                targetX, targetY,
+                ropeParams.segments,
+                ropeParams.stiffness,
+                ropeParams.damping
+            );
+            
+            // 附着到起始刚体
+            rope.attachToBody({
+                body: startBody,
+                offset: { x: 0, y: 0 }
+            }, true);
+            
+            // 如果有终止刚体，附着上去
+            if (endBody) {
+                rope.attachToBody({
+                    body: endBody,
+                    offset: { x: 0, y: 0 }
+                }, false);
+            } else {
+                // 固定在空中
+                const lastIdx = rope.points.length - 1;
+                rope.points[lastIdx].pinned = true;
+            }
+            
+            ropes.push(rope);
+            updateStats();
+        }
+        
+        // ========================================
+        // 渲染函数
+        // ========================================
+        function render() {
+            // 清除画布
+            ctx.fillStyle = '#0a0a0f';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // 绘制网格背景
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
+            ctx.lineWidth = 1;
+            const gridSize = 50;
+            for (let x = 0; x < canvas.width; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // 绘制边界
+            ctx.fillStyle = '#1a1a25';
+            for (let bound of bounds) {
+                ctx.beginPath();
+                const vertices = bound.vertices;
+                ctx.moveTo(vertices[0].x, vertices[0].y);
+                for (let i = 1; i < vertices.length; i++) {
+                    ctx.lineTo(vertices[i].x, vertices[i].y);
+                }
+                ctx.closePath();
+                ctx.fill();
+            }
+            
+            // 绘制绳子
+            for (let rope of ropes) {
+                rope.render(ctx);
+            }
+            
+            // 绘制刚体
+            for (let body of interactiveBodies) {
+                const vertices = body.vertices;
+                
+                ctx.beginPath();
+                ctx.moveTo(vertices[0].x, vertices[0].y);
+                for (let i = 1; i < vertices.length; i++) {
+                    ctx.lineTo(vertices[i].x, vertices[i].y);
+                }
+                ctx.closePath();
+                
+                // 填充颜色
+                let fillColor = body.customColor || '#00f5ff';
+                
+                // 如果是选中的刚体，高亮显示
+                if (body === selectedBody) {
+                    fillColor = '#ff00aa';
+                    ctx.shadowColor = '#ff00aa';
+                    ctx.shadowBlur = 20;
+                }
+                
+                ctx.fillStyle = fillColor;
+                ctx.fill();
+                
+                // 边框
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                
+                ctx.shadowBlur = 0;
+            }
+            
+            // 绘制连接线预览（绳子工具模式下）
+            if (currentTool === 'rope' && ropeStartBody) {
+                const startPos = ropeStartBody.position;
+                const mousePos = mouse.position;
+                
+                ctx.beginPath();
+                ctx.moveTo(startPos.x, startPos.y);
+                ctx.lineTo(mousePos.x, mousePos.y);
+                ctx.strokeStyle = 'rgba(255, 204, 0, 0.5)';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([10, 5]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            
+            // 计算 FPS
+            frameCount++;
+            const now = performance.now();
+            if (now - lastTime >= 1000) {
+                fps = frameCount;
+                frameCount = 0;
+                lastTime = now;
+                document.getElementById('fps').textContent = fps;
+            }
+        }
+        
+        // ========================================
+        // 游戏循环
+        // ========================================
+        function gameLoop() {
+            // 更新 Matter.js 物理
+            Engine.update(engine, 1000 / 60);
+            
+            // 更新所有绳子
+            for (let rope of ropes) {
+                rope.update({ x: 0, y: 0.15 });
+            }
+            
+            // 渲染
+            render();
+            
+            requestAnimationFrame(gameLoop);
+        }
+        
+        // ========================================
+        // 工具函数
+        // ========================================
+        function setTool(tool) {
+            currentTool = tool;
+            ropeStartBody = null;
+            selectedBody = null;
+            
+            // 更新按钮状态
+            document.querySelectorAll('.tool-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.tool === tool);
+            });
+            
+            // 更新鼠标约束
+            mouseConstraint.constraint.stiffness = tool === 'select' ? 0.2 : 0;
+            
+            // 更新提示
+            const hint = document.getElementById('connection-hint');
+            hint.classList.toggle('visible', tool === 'rope');
+            
+            updateStatus();
+        }
+        
+        function updateStatus(customText = null) {
+            const statusText = document.getElementById('status-text');
+            if (customText) {
+                statusText.textContent = customText;
+                return;
+            }
+            
+            switch (currentTool) {
+                case 'select':
+                    statusText.textContent = '选择模式 - 拖拽刚体移动';
+                    break;
+                case 'rope':
+                    statusText.textContent = '绳子模式 - 点击刚体创建绳子连接';
+                    break;
+                case 'cut':
+                    statusText.textContent = '剪断模式 - 点击绳子进行剪断';
+                    break;
+            }
+        }
+        
+        function updateParam(param) {
+            const input = document.getElementById(param);
+            const valueDisplay = document.getElementById(`${param}-value`);
+            valueDisplay.textContent = input.value;
+            ropeParams[param] = parseFloat(input.value);
+        }
+        
+        function updateStats() {
+            document.getElementById('body-count').textContent = interactiveBodies.length;
+            document.getElementById('rope-count').textContent = ropes.length;
+        }
+        
+        function addRandomBody() {
+            const x = 200 + Math.random() * (canvas.width - 500);
+            const y = 50 + Math.random() * 150;
+            createBody(x, y);
+        }
+        
+        function clearRopes() {
+            ropes = [];
+            updateStats();
+        }
+        
+        function resetScene() {
+            // 清除绳子
+            ropes = [];
+            
+            // 清除刚体
+            for (let body of interactiveBodies) {
+                Composite.remove(engine.world, body);
+            }
+            interactiveBodies = [];
+            
+            // 重置工具
+            setTool('select');
+            
+            // 重新初始化
+            initScene();
+        }
+        
+        // ========================================
+        // 启动
+        // ========================================
+        initScene();
+        gameLoop();
+    </script>
+</body>
+</html>

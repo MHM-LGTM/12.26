@@ -21,33 +21,60 @@ from PIL import Image
 
 from ..utils.mask_utils import extract_contour
 from ..utils.logger import log
-from ..config.settings import SAM_MODEL_TYPE, SAM_CHECKPOINT_PATH, SAM_DEVICE
+from ..config.settings import SAM_CHECKPOINT_PATH, SAM_DEVICE
 
 _predictor = None  # SamPredictor 实例（懒加载）
 _current_image_path: str | None = None  # 已设置到 predictor 的图片路径（用于避免重复 set_image）
 
 
+def _guess_sam2_config_name(checkpoint_path: Path) -> str:
+    name = checkpoint_path.name.lower()
+    if "hiera_base_plus" in name or "hiera_b" in name or "b+" in name:
+        return "sam2_hiera_b+.yaml"
+    elif "hiera_l" in name:
+        return "sam2_hiera_l.yaml"
+    elif "hiera_s" in name:
+        return "sam2_hiera_s.yaml"
+    elif "hiera_t" in name:
+        return "sam2_hiera_t.yaml"
+    else:
+        return "sam2_hiera_b+.yaml"
+
+
+def _init_sam2(ckpt: Path) -> object | None:
+    try:
+        from sam2.build_sam import build_sam2  # type: ignore
+        from sam2.sam2_image_predictor import SAM2ImagePredictor  # type: ignore
+    except Exception as e:
+        log.error(f"sam2 未安装或导入失败: {e}")
+        return None
+
+    config_name = _guess_sam2_config_name(ckpt)
+
+    try:
+        device = SAM_DEVICE
+        model = build_sam2(config_file=config_name, ckpt_path=str(ckpt), device=device, mode="eval")
+        predictor = SAM2ImagePredictor(model)
+        log.info(f"SAM2 模型已加载: device={device}, ckpt={ckpt}, config={config_name}")
+        return predictor
+    except Exception as e:
+        log.error(f"SAM2 加载失败: {e}")
+        return None
+
+
 def init_sam() -> None:
     """加载 SAM 模型到内存。默认使用 CPU。"""
     global _predictor
-    try:
-        from segment_anything import sam_model_registry, SamPredictor
-    except Exception as e:
-        log.error(f"segment-anything 未安装或导入失败: {e}")
-        _predictor = None
-        return
-
     ckpt = Path(SAM_CHECKPOINT_PATH)
     if not ckpt.exists():
         log.error(f"SAM 权重文件不存在: {ckpt}")
         _predictor = None
         return
 
-    sam = sam_model_registry[SAM_MODEL_TYPE](checkpoint=str(ckpt))
-    device = SAM_DEVICE  # 可按需切换 "cuda"
-    sam.to(device)
-    _predictor = SamPredictor(sam)
-    log.info(f"SAM 模型已加载: type={SAM_MODEL_TYPE}, device={device}, ckpt={ckpt}")
+    _predictor = _init_sam2(ckpt)
+
+    if _predictor is None:
+        log.error("分割模型初始化失败，SAM 分割接口将不可用")
 
 
 def _ensure_image(image_path: str) -> int:

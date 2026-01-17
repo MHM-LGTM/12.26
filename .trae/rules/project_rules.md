@@ -8,21 +8,37 @@ project-root/
 ├── frontend/                     # 存放前端所有业务逻辑代码（页面、组件、接口、工具），是用户能直接感知的 “交互层”。指挥关系：被package.json（依赖配置）支撑，内部各子目录按 “页面→组件→接口→工具” 的逻辑调用（页面指挥组件 / 接口，组件 / 接口调用工具）。
 │   ├── src/
 │   │   ├── api/                  # 封装所有与后端的 HTTP 请求，统一管理接口地址与参数，避免页面 / 组件直接写请求逻辑（减少重复代码，方便后期改接口地址）。
+│   │   │   ├── axios.js          # Axios 统一实例：自动携带 JWT Token、统一处理 401 等错误
 │   │   │   ├── physicsApi.js     # 物理模拟专属接口，对应后端physics_router.py，上传物理图片、坐标、请求分割、发送生成模拟请求
 │   │   │   ├── mathApi.js        # 数学题讲解相关接口，数学讲解部分，请求 Manim 生成动画视频（目前无音频）。
-│   │   │   └── index.js          # 统一导出所有 API，把physicsApi.js和mathApi.js的方法导出，方便统一导入，不需修改，只导出新增的 API 即可。
+│   │   │   ├── authApi.js        # 认证相关接口：注册 / 登录 / 获取当前用户信息
+│   │   │   └── index.js          # 统一导出所有 API，把各 API 文件的方法集中导出，方便统一导入
+│   │   │
+│   │   ├── store/                # 全局状态管理（例如登录态）
+│   │   │   └── authStore.js      # Zustand 管理 token / user / isLoggedIn，并用 localStorage 持久化
 │   │   │
 │   │   ├── components/           # 通用组件       
 │   │   │   ├── PhysicsInputBox.jsx   # 物理模拟模式输入框样式、开始模拟按钮样式、点击上传图片监听器、拖拽上传图片监听器、框选点选区域交互效果（Segment Anything 交互）。
 │   │   │   ├── MathInputBox.jsx      # 数学解题模式文本输入框 ，图片上传，图片上传预览，创建讲解视频按钮
 │   │   │   ├── InputSelector.jsx     # 左上角切换模式按钮（物理模拟/数学解题），全局导航组件，放置在APP.js中
+│   │   │   ├── AnimationInfoBar.jsx  # 动画信息栏（标题、作者、点赞等展示）
+│   │   │   ├── MyAnimationsPanel.jsx # “我的动画”面板：列表展示、管理入口
+│   │   │   ├── PlazaPanel.jsx        # 动画广场面板：公开动画列表展示与进入播放
+│   │   │   ├── LikeButton.jsx        # 点赞按钮与状态联动
+│   │   │   ├── SaveAnimationModal.jsx # 保存动画弹窗：填写标题/描述/封面等
+│   │   │   ├── ShareLinkModal.jsx    # 分享链接弹窗：生成并展示分享码/链接
+│   │   │   ├── Auth/                 # 认证相关组件（登录、用户菜单等）
+│   │   │   │   ├── LoginModal.jsx    # 登录/注册弹窗（获取 Token 并写入 authStore）
+│   │   │   │   ├── UserMenu.jsx      # 右上角用户菜单（退出登录等）
+│   │   │   │   └── styles.css        # 认证相关样式
 │   │   │   ├── ErrorToast.jsx        # 统一错误提示机制
 │   │   │   ├── LoadingSpinner.jsx    # 加载状态，用于显示图片上传，请求处理时的等待状态
 │   │   │   └── styles.css            # 输入框与 Canvas 层样式
 │   │   │
 │   │   ├── pages/
 │   │   │   ├── PhysicsPage.jsx   # 显示物理模拟Canvas画布输入框，显示热门动画区域，显示右上角登录区域。
-│   │   │   └── MathPage.jsx      # 显示数学讲解动画输入框、显示热门动画区域，显示右上角登录区域。
+│   │   │   ├── MathPage.jsx      # 显示数学讲解动画输入框、显示热门动画区域，显示右上角登录区域。
+│   │   │   └── PlayPage.jsx      # 动画播放页：通过分享码加载动画并自动模拟，支持 Fork 到“我的动画”
 │   │   │
 │   │   ├── utils/
 │   │   │   ├── physicsEngine.js  # 前端物理引擎算法存储，PhysicsInputBox.jsx文件接收后端返回的物体模拟信息后调用该文件中的函数执行模拟。
@@ -34,16 +50,20 @@ project-root/
 │   ├── index.html               # 应用入口 HTML 文件，加载 React 应用
 │   │
 │   │
-│   └── package.json
+│   ├── package.json
+│   └── package-lock.json        # npm 依赖锁文件（保证多人/多机安装依赖一致）
 │
 │
 ├── backend/                      # Python 后端
 │   ├── app/
-│   │   ├── main.py               # FastAPI 启动入口,启动时提前加载一次SAM，把模型实例注入到segment_service.py中，后续请求直接复用实例。
+│   │   ├── main.py               # FastAPI 启动入口：注册路由、初始化依赖（如分割模型、数据库等）
 │   │   ├── routers/
 │   │   │   ├── physics_router.py # 接收前端物理模拟部分请求并分配任务给后端文件执行任务，并返回相应结果，处理物理模拟图片上传分配给multimodal_service.py、掩码生成并返回坐标分配给segment_service.py，前端发送生成模拟时分配给OpenCV 处理对象坐标并抠图调用opencv_service.py。
-│   │   │   └── math_router.py    # 接收前端数学解题部分请求并分配任务给后端文件执行任务，并返回相应结果，接收前端的数学图片以及需求分配任务给multimodal_manim_service.py，注意math_router.py 里用 BackgroundTasks，把渲染任务扔到后台，路由先返回响应，防止阻塞。
+│   │   │   ├── math_router.py    # 接收前端数学解题部分请求并分配任务给后端文件执行任务，并返回相应结果，接收前端的数学图片以及需求分配任务给multimodal_manim_service.py，注意math_router.py 里用 BackgroundTasks，把渲染任务扔到后台，路由先返回响应，防止阻塞。
+│   │   │   ├── auth_router.py    # 认证接口：注册 / 登录（JWT Token）/ 获取当前用户信息（/me）
+│   │   │   └── animation_router.py # 动画管理接口：保存/删除、我的动画、广场、点赞、分享链接、Fork 等
 │   │   ├── services/
+│   │   │   ├── auth_service.py       # 密码哈希校验、JWT 生成/解析，以及 get_current_user 等鉴权工具
 │   │   │   ├── segment_service.py    # 调用 Segment Anything 模型，根据前端坐标生成掩码，后调用mask_utils.py中的函数通过掩码生成物体外圈坐标，通过路由返回给前端，前端处理后给用户呈现选中物体亮线的效果。 
 │   │   │   ├── opencv_service.py     # 使用 OpenCV计算机视觉库提取几何结构（斜面角度、物体边界坐标、以及抠出物体样子作为精灵图），并将结果提交给analog_info_gather_service.py。
 │   │   │   ├── multimodal_service.py # 调用pictures_utils.py处理图片后将图像信息发给多模态大模型（识别题目信息、摩擦系数、质量等）
@@ -52,20 +72,28 @@ project-root/
 │   │   │   └── ffmpeg_service.py     # 使用ffmpeg合并音频视频，并通过路由返回给前端。
 │   │   │
 │   │   ├── models/
-│   │   │   ├── physics_schema.py     # 用户上传图片、掩码、属性等字段
+│   │   │   ├── base.py               # SQLAlchemy Base（统一声明 ORM 基类）
+│   │   │   ├── user.py               # 用户表：手机号、密码哈希、创建时间、最后登录时间
+│   │   │   ├── animation.py          # 动画表 + 点赞表：scene_data、公开状态、分享码等
+│   │   │   ├── animation_schema.py   # 动画相关请求/响应 Schema（保存、列表、详情等）
+│   │   │   ├── physics_schema.py     # 物理模拟接口字段（图片、掩码、属性等）
 │   │   │   ├── math_schema.py        # 数学讲解接口字段（题目文本、图片路径）
 │   │   │   └── response_schema.py    # 统一返回格式（状态码、消息、结果数据）
 │   │   │
 │   │   ├── utils/                    # 后端工具函数，处于被调用状态
-│   │   │   ├── file_utils.py         # 将前端上传的图片上传到uplods目录下。
+│   │   │   ├── file_utils.py         # 将前端上传的图片写入 uploads 目录下
 │   │   │   ├── pictures_utils.py     # 接受multimodal_service.py等文件的调用去进行图片格式转换，将图片转换为各方可以接受的文件，如png,jpg转换为base64编码格式。
 │   │   │   ├── mask_utils.py         # 接受opencv_service.py，segment_service.py等文件的调用，将掩码转换为物体周围坐标
 │   │   │   ├── prompt_utils.py       # 存放物理模拟大模型使用的提示词
 │   │   │   ├── prompt_manim_utils.py # 存放manim演示视频大模型使用的提示词
 │   │   │   └── logger.py             # 统一日志系统（用于调试）
 │   │   │
-│   │   └── config/
-│   │      └── settings.py           # 统一配置中心：自动加载 project-root/.env 与系统环境变量，集中管理模型路径、端口、CORS、数据库配置、端点与密钥；提供默认值与类型校验与路径规范化，避免硬编码
+│   │   ├── config/
+│   │   │   ├── settings.py           # 统一配置中心：自动加载 project-root/.env 与系统环境变量，集中管理模型路径、端口、CORS、数据库配置、端点与密钥；提供默认值与类型校验与路径规范化，避免硬编码
+│   │   │   └── database.py           # SQLite 异步数据库引擎与会话管理，提供 Depends(get_db)
+│   │   │
+│   │   └── checkpoints/             # 分割模型存储目录（Segment Anything / SAM2）
+│   │       └── sam2_hiera_base_plus.pt # 分割模型权重文件
 │   │
 │   ├── uploads/                      # 涉及到暂存用户上传的物理图片、数学图片
 │   │   ├── physics/                  # 物理模拟图片暂存目录
@@ -76,7 +104,9 @@ project-root/
 │   │   ├── test_opencv.py            # 测试几何信息提取
 │   │   └── test_api.py               # 测试 API 是否返回正确结果
 │   │
+│   ├── init_db.py                    # 初始化数据库（创建表结构等）
+│   ├── sql_app.db                    # SQLite 数据库文件（本地开发）
 │   ├── requirements.txt      # 锁定依赖版本（Manim、OpenCV、Segment Anything 容易冲突）＋ .env 支持（python-dotenv）
 │   └── README.md                     
 │
-└── README.md               
+└── README.md

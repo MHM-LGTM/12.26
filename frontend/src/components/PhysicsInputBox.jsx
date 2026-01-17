@@ -956,149 +956,143 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
           多模态识别未启用或失败：{doubaoError || '请配置后端环境变量 ARK_API_KEY（豆包方舟平台）后重启后端'}
         </div>
       )}
-      <div
-        className="upload-area"
-        onDragOver={(e) => e.preventDefault()}
-        onDrop={handleDrop}
-        ref={uploadRef}
-        onClick={!imagePreview ? handleClickUpload : undefined}
-      >
-        {imagePreview ? (
-          <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-            <img
-              ref={imgRef}
-              src={imagePreview}
-              alt="preview"
-              style={{
-                position: 'absolute',
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -50%)',
-                maxWidth: '100%',
-                maxHeight: '100%',
-                borderRadius: 24,
-                pointerEvents: 'none',
-              }}
-              onLoad={handleImageLoad}
-            />
-            <canvas
-              className="canvas-holder"
-              ref={canvasRef}
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 2, cursor: 'crosshair' }}
-            />
-            <div
-              ref={simRef}
-              style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none' }}
-            />
+      <div className="upload-area">
+        <div
+          className="upload-split-left"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={handleDrop}
+          ref={uploadRef}
+          onClick={!imagePreview ? handleClickUpload : undefined}
+        >
+          {imagePreview ? (
+            <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+              <img
+                ref={imgRef}
+                src={imagePreview}
+                alt="preview"
+                style={{
+                  position: 'absolute',
+                  top: '50%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%)',
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  borderRadius: 24,
+                  pointerEvents: 'none',
+                }}
+                onLoad={handleImageLoad}
+              />
+              <canvas
+                className="canvas-holder"
+                ref={canvasRef}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 2, cursor: 'crosshair' }}
+              />
+              <div
+                ref={simRef}
+                style={{ position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none' }}
+              />
 
-            {/* 元素选择弹窗 (紧贴鼠标点击/松开位置右侧) */}
-            {lastImageContour.length > 0 && pendingElements.length > 0 && canvasRef.current && lastMousePos && (() => {
-               // 计算位置
-               const rect = canvasRef.current.getBoundingClientRect();
-               
-               // 使用最后一次鼠标位置作为基准
-               const { x: mouseX, y: mouseY } = lastMousePos;
-               
-               // 必须放在与 canvas 相同的坐标系容器中
-               // 使用一个 overlay div 匹配 canvas 的位置和尺寸
-               return (
-                 <div style={{
-                   position: 'absolute',
-                   top: '50%',
-                   left: '50%',
-                   transform: 'translate(-50%, -50%)',
-                   width: rect.width,
-                   height: rect.height,
-                   zIndex: 20,
-                   pointerEvents: 'none', // 让点击穿透空白区域
-                 }}>
+              {lastImageContour.length > 0 && pendingElements.length > 0 && canvasRef.current && lastMousePos && (() => {
+                 const rect = canvasRef.current.getBoundingClientRect();
+                 const { x: mouseX, y: mouseY } = lastMousePos;
+
+                 return (
                    <div style={{
                      position: 'absolute',
-                     left: mouseX, // 定位到鼠标位置
-                     top: mouseY,
-                     marginLeft: 12, // 与鼠标指针的一点间距
-                     pointerEvents: 'auto', // 恢复点击交互
-                     
-                     // 样式参考
-                     backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                     border: '1px solid #e5e7eb',
-                     borderRadius: 12,
-                     padding: '8px 10px',
-                     boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
-                     minWidth: 140,
-                     display: 'flex',
-                     flexDirection: 'column',
-                     gap: 6,
+                     top: '50%',
+                     left: '50%',
+                     transform: 'translate(-50%, -50%)',
+                     width: rect.width,
+                     height: rect.height,
+                     zIndex: 20,
+                     pointerEvents: 'none',
                    }}>
-                     <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>请选择元素：</div>
-                     {pendingElements.map((e, i) => (
-                        <button
-                          key={(e.display_name || e.name) + i}
-                          className="start-btn"
-                          style={{
-                            textAlign: 'left',
-                            padding: '6px 10px',
-                            fontSize: 13,
-                            backgroundColor: e.is_concave ? '#fef3c7' : '#f8fafc',
-                            borderColor: e.is_concave ? '#f59e0b' : '#e2e8f0',
-                            width: '100%',
-                            whiteSpace: 'nowrap',
-                          }}
-                          onClick={() => assignCurrentSelection(e, i)}
-                        >
-                          {e.display_name || e.name}{e.is_concave ? '（凹面体）' : ''}
-                        </button>
-                      ))}
+                     <div style={{
+                       position: 'absolute',
+                       left: mouseX,
+                       top: mouseY,
+                       marginLeft: 12,
+                       pointerEvents: 'auto',
+                       backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                       border: '1px solid #e5e7eb',
+                       borderRadius: 12,
+                       padding: '8px 10px',
+                       boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+                       minWidth: 140,
+                       display: 'flex',
+                       flexDirection: 'column',
+                       gap: 6,
+                     }}>
+                       <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>请选择元素：</div>
+                       {pendingElements.map((e, i) => (
+                          <button
+                            key={(e.display_name || e.name) + i}
+                            className="start-btn"
+                            style={{
+                              textAlign: 'left',
+                              padding: '6px 10px',
+                              fontSize: 13,
+                              backgroundColor: e.is_concave ? '#fef3c7' : '#f8fafc',
+                              borderColor: e.is_concave ? '#f59e0b' : '#e2e8f0',
+                              width: '100%',
+                              whiteSpace: 'nowrap',
+                            }}
+                            onClick={() => assignCurrentSelection(e, i)}
+                          >
+                            {e.display_name || e.name}{e.is_concave ? '（凹面体）' : ''}
+                          </button>
+                        ))}
+                     </div>
                    </div>
-                 </div>
-               );
-            })()}
+                 );
+              })()}
 
-            {/* 阶段一/二新增：按钮放在画布右下角（内部） */}
-            <div style={{
-              position: 'absolute',
-              bottom: 16,
-              right: 16,
-              display: 'flex',
-              gap: 12,
-              alignItems: 'center',
-              zIndex: 30,
-              pointerEvents: 'auto'
-            }}>
-              <button 
-                className="start-btn" 
-                onClick={handleStartSimulate} 
-                disabled={loading || interactionMode === 'select_pivot'}
-                style={{
-                  backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                  backdropFilter: 'blur(8px)',
-                  boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)'
-                }}
-              >
-                开始模拟 →
-              </button>
-              
-              {canDownload && (
+              <div style={{
+                position: 'absolute',
+                bottom: 16,
+                right: 16,
+                display: 'flex',
+                gap: 12,
+                alignItems: 'center',
+                zIndex: 30,
+                pointerEvents: 'auto'
+              }}>
                 <button 
-                  className="start-btn"
-                  onClick={handleDownloadClick}
+                  className="start-btn" 
+                  onClick={handleStartSimulate} 
+                  disabled={loading || interactionMode === 'select_pivot'}
                   style={{
                     backgroundColor: 'rgba(255, 255, 255, 0.95)',
                     backdropFilter: 'blur(8px)',
                     boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)'
                   }}
                 >
-                  {animationSource === 'plaza' ? '保存到我的' : '下载动画'}
+                  开始模拟 →
                 </button>
-              )}
+                
+                {canDownload && (
+                  <button 
+                    className="start-btn"
+                    onClick={handleDownloadClick}
+                    style={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                      backdropFilter: 'blur(8px)',
+                      boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)'
+                    }}
+                  >
+                    {animationSource === 'plaza' ? '保存到我的' : '下载动画'}
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        ) : (
-          <div className="upload-text">+ 请将图片上传到这里（点击或拖拽）</div>
-        )}
+          ) : (
+            <div className="upload-text">+ 请将图片上传到这里（点击或拖拽）</div>
+          )}
+        </div>
+        <div className="upload-split-right" />
       </div>
 
       {recognizedDetailed && recognizedDetailed.length > 0 && (

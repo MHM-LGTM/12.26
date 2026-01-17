@@ -7,9 +7,8 @@
 - 定义 Segment Anything 模型配置：模型类型与 checkpoint 路径、设备。
 - 定义豆包（Doubao Ark）多模态调用配置：`ARK_BASE_URL`、`ARK_API_KEY`、`DOUBAO_MODEL_ID`。
 
-本次修改（同步权重新位置）：
-- 默认的 `SAM_CHECKPOINT_PATH` 从 `backend/app/models/sam_vit_l_0b3195.pth` 更新为
-  `backend/app/checkpoints/sam_vit_l_0b3195.pth`，以避免与 Pydantic “数据模型”目录混放。
+本次修改（同步 SAM 权重）：
+- 默认的 `SAM_CHECKPOINT_PATH` 指向 `backend/app/checkpoints/sam2_hiera_base_plus.pt`。
 - 仍支持通过环境变量覆盖（`.env` 或系统环境变量），无需改代码即可指向自定义权重路径。
 
 使用说明：
@@ -60,16 +59,14 @@ else:
     ]
 
 # --- Segment Anything 配置 ---
-# 模型类型可选："vit_b"、"vit_l"、"vit_h"（对应官方权重）
-SAM_MODEL_TYPE = os.getenv("SAM_MODEL_TYPE", "vit_b")
 # 模型权重文件路径：
-# - 默认指向 `backend/app/checkpoints/sam_vit_l_0b3195.pth`（与数据模型分离，便于归档管理）。
+# - 默认指向 `backend/app/checkpoints/sam2_hiera_base_plus.pt`。
 # - 可通过环境变量 `SAM_CHECKPOINT_PATH` 覆盖为任意绝对/相对路径。
 # - 该值被 `segment_service.init_sam` 在启动时读取并校验存在性。
 SAM_CHECKPOINT_PATH = Path(
     os.getenv(
         "SAM_CHECKPOINT_PATH",
-        BACKEND_DIR / "app" / "checkpoints" / "sam_vit_b_01ec64.pth",
+        BACKEND_DIR / "app" / "checkpoints" / "sam2_hiera_base_plus.pt",
     )
 ).expanduser().resolve()
 

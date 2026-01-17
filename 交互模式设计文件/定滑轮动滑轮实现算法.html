@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>定滑轮 + 动滑轮系统 (稳定版)</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <style>
+        body { margin: 0; background: #0a0a0f; overflow: hidden; }
+        canvas { display: block; }
+        .info { 
+            position: absolute; top: 20px; left: 20px; 
+            color: #888; font-family: monospace; font-size: 14px;
+            background: rgba(0,0,0,0.6); padding: 15px; border-radius: 8px;
+            line-height: 1.8;
+        }
+        .cyan { color: #00f5ff; }
+        .green { color: #00ff88; }
+        .pink { color: #ff00aa; }
+        .yellow { color: #ffcc00; }
+    </style>
+</head>
+<body>
+    <div class="info">
+        <div><span class="cyan">●</span> 定滑轮 (固定，改变力方向)</div>
+        <div><span class="green">●</span> 动滑轮 (受重力，被绳子托住)</div>
+        <div><span class="pink">■</span> 可拖拽方块</div>
+        <div><span class="yellow">—</span> 绳子</div>
+        <br>
+        <div>拖动 <span class="pink">方块</span> 观察 <span class="green">动滑轮</span> 运动</div>
+    </div>
+    <canvas id="canvas"></canvas>
+    <script>
+        const { Engine, Bodies, Body, Composite, Mouse, MouseConstraint } = Matter;
+        
+        const canvas = document.getElementById('canvas');
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        const ctx = canvas.getContext('2d');
+        
+        // 物理引擎
+        const engine = Engine.create({ 
+            gravity: { x: 0, y: 0.8 }  // 稍微降低重力
+        });
+        
+        // ========== 场景设置 ==========
+        const centerX = canvas.width / 2;
+        
+        // 固定锚点（绳子起点，固定在墙上）
+        const anchor = { x: centerX - 250, y: 100 };
+        
+        // 定滑轮（固定不动）
+        const fixedPulley = {
+            x: centerX + 150,
+            y: 100,
+            radius: 30,
+            angle: 0
+        };
+        
+        // 动滑轮（Matter.js 刚体，只受重力）
+        const movablePulleyRadius = 30;
+        const movablePulleyBody = Bodies.circle(centerX - 50, 300, movablePulleyRadius, {
+            restitution: 0,
+            friction: 0.5,
+            frictionAir: 0.01,
+            density: 0.002,
+            label: 'movablePulley',
+            collisionFilter: { category: 0x0002, mask: 0x0001 }  // 不与方块碰撞
+        });
+        let movablePulleyAngle = 0;
+        
+        // 可拖拽的方块
+        const block = Bodies.rectangle(centerX + 250, 350, 50, 50, {
+            restitution: 0,
+            friction: 0.3,
+            frictionAir: 0.02,
+            density: 0.001,
+            label: 'block',
+            collisionFilter: { category: 0x0001, mask: 0x0001 }
+        });
+        
+        // 边界
+        const walls = [
+            Bodies.rectangle(canvas.width/2, canvas.height + 25, canvas.width, 50, { 
+                isStatic: true, collisionFilter: { category: 0x0001, mask: 0x0003 } 
+            }),
+            Bodies.rectangle(-25, canvas.height/2, 50, canvas.height, { 
+                isStatic: true, collisionFilter: { category: 0x0001, mask: 0x0003 }
+            }),
+            Bodies.rectangle(canvas.width + 25, canvas.height/2, 50, canvas.height, { 
+                isStatic: true, collisionFilter: { category: 0x0001, mask: 0x0003 }
+            })
+        ];
+        
+        Composite.add(engine.world, [movablePulleyBody, block, ...walls]);
+        
+        // 鼠标拖拽
+        const mouse = Mouse.create(canvas);
+        const mouseConstraint = MouseConstraint.create(engine, {
+            mouse,
+            constraint: { stiffness: 0.2, render: { visible: false } }
+        });
+        Composite.add(engine.world, mouseConstraint);
+        
+        // ========== Verlet 绳子 ==========
+        class Rope {
+            constructor(segments = 50) {
+                this.segments = segments;
+                this.points = [];
+                this.restLength = 0;
+                this.segmentLength = 0;
+                
+                // 物理参数
+                this.stiffness = 0.95;      // 更硬
+                this.damping = 0.98;
+                this.gravity = 0.1;
+                
+                this.init();
+            }
+            
+            init() {
+                const mp = movablePulleyBody.position;
+                const fp = fixedPulley;
+                const bp = block.position;
+                
+                // 计算绳子总长度（留一些余量让绳子自然垂下）
+                const len1 = this.dist(anchor, mp) + Math.PI * movablePulleyRadius;
+                const len2 = this.dist(mp, fp) + Math.PI * fp.radius;
+                const len3 = this.dist(fp, bp);
+                this.restLength = (len1 + len2 + len3) * 1.02;  // 更紧，几乎没有余量
+                this.segmentLength = this.restLength / this.segments;
+                
+                // 初始化绳子点 - 简单直线分布
+                for (let i = 0; i <= this.segments; i++) {
+                    const t = i / this.segments;
+                    let x, y;
+                    
+                    // 分三段初始化
+                    if (t < 0.35) {
+                        // 锚点到动滑轮
+                        const lt = t / 0.35;
+                        x = anchor.x + (mp.x - anchor.x) * lt;
+                        y = anchor.y + (mp.y + movablePulleyRadius - anchor.y) * lt;
+                    } else if (t < 0.7) {
+                        // 动滑轮到定滑轮
+                        const lt = (t - 0.35) / 0.35;
+                        x = mp.x + (fp.x - mp.x) * lt;
+                        y = (mp.y - movablePulleyRadius) + (fp.y + fp.radius - (mp.y - movablePulleyRadius)) * lt;
+                    } else {
+                        // 定滑轮到方块
+                        const lt = (t - 0.7) / 0.3;
+                        x = fp.x + (bp.x - fp.x) * lt;
+                        y = (fp.y + fp.radius) + (bp.y - (fp.y + fp.radius)) * lt;
+                    }
+                    
+                    this.points.push({ x, y, oldX: x, oldY: y });
+                }
+            }
+            
+            dist(a, b) {
+                return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+            }
+            
+            update() {
+                const mp = movablePulleyBody.position;
+                const bp = block.position;
+                
+                // 固定端点
+                this.points[0].x = anchor.x;
+                this.points[0].y = anchor.y;
+                
+                const last = this.points[this.points.length - 1];
+                last.x = bp.x;
+                last.y = bp.y - 25;  // 连接到方块顶部
+                
+                // Verlet 积分
+                for (let i = 1; i < this.points.length - 1; i++) {
+                    const p = this.points[i];
+                    const vx = (p.x - p.oldX) * this.damping;
+                    const vy = (p.y - p.oldY) * this.damping;
+                    
+                    p.oldX = p.x;
+                    p.oldY = p.y;
+                    p.x += vx;
+                    p.y += vy + this.gravity;
+                }
+                
+                // 约束求解 - 多次迭代
+                for (let iter = 0; iter < 25; iter++) {
+                    this.solveDistanceConstraints();
+                    this.solveFixedPulleyConstraint();
+                    this.solveMovablePulleyConstraint();
+                    
+                    // 重新固定端点
+                    this.points[0].x = anchor.x;
+                    this.points[0].y = anchor.y;
+                    last.x = bp.x;
+                    last.y = bp.y - 25;
+                }
+                
+                // 更新滑轮旋转
+                this.updatePulleyRotations();
+                
+                // 对方块施加绳子张力
+                this.applyTensionToBlock();
+            }
+            
+            solveDistanceConstraints() {
+                for (let i = 0; i < this.points.length - 1; i++) {
+                    const p1 = this.points[i];
+                    const p2 = this.points[i + 1];
+                    
+                    const dx = p2.x - p1.x;
+                    const dy = p2.y - p1.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (dist < 0.0001) continue;
+                    
+                    // 绳子只能拉伸很少，不能被压缩
+                    const maxStretch = this.segmentLength * 1.01;  // 最多拉伸1%
+                    
+                    let targetDist = this.segmentLength;
+                    if (dist > maxStretch) {
+                        targetDist = maxStretch;
+                    }
+                    
+                    const diff = (targetDist - dist) / dist * this.stiffness;
+                    const offsetX = dx * diff * 0.5;
+                    const offsetY = dy * diff * 0.5;
+                    
+                    // 两端固定点不动
+                    if (i !== 0) {
+                        p1.x -= offsetX;
+                        p1.y -= offsetY;
+                    }
+                    if (i !== this.points.length - 2) {
+                        p2.x += offsetX;
+                        p2.y += offsetY;
+                    }
+                }
+            }
+            
+            solveFixedPulleyConstraint() {
+                const fp = fixedPulley;
+                const minDist = fp.radius + 2;
+                
+                for (let i = 1; i < this.points.length - 1; i++) {
+                    const p = this.points[i];
+                    const dx = p.x - fp.x;
+                    const dy = p.y - fp.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (dist < minDist && dist > 0.001) {
+                        const nx = dx / dist;
+                        const ny = dy / dist;
+                        p.x = fp.x + nx * minDist;
+                        p.y = fp.y + ny * minDist;
+                    }
+                }
+            }
+            
+            solveMovablePulleyConstraint() {
+                const mp = movablePulleyBody.position;
+                const minDist = movablePulleyRadius + 2;
+                
+                let totalForceX = 0;
+                let totalForceY = 0;
+                
+                for (let i = 1; i < this.points.length - 1; i++) {
+                    const p = this.points[i];
+                    const dx = p.x - mp.x;
+                    const dy = p.y - mp.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (dist < minDist && dist > 0.001) {
+                        const nx = dx / dist;
+                        const ny = dy / dist;
+                        const penetration = minDist - dist;
+                        
+                        // 把绳子点推出去
+                        p.x = mp.x + nx * minDist;
+                        p.y = mp.y + ny * minDist;
+                        
+                        // 累积反作用力（绳子推滑轮）
+                        totalForceX -= nx * penetration;
+                        totalForceY -= ny * penetration;
+                    }
+                }
+                
+                // 施加反作用力给动滑轮
+                if (totalForceX !== 0 || totalForceY !== 0) {
+                    const forceMag = Math.sqrt(totalForceX * totalForceX + totalForceY * totalForceY);
+                    const forceScale = 0.00015;  // 调节力的大小
+                    
+                    Body.applyForce(movablePulleyBody, mp, {
+                        x: totalForceX * forceScale,
+                        y: totalForceY * forceScale
+                    });
+                }
+            }
+            
+            applyTensionToBlock() {
+                const last = this.points[this.points.length - 1];
+                const prev = this.points[this.points.length - 2];
+                
+                const dx = prev.x - last.x;
+                const dy = prev.y - last.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                
+                if (dist > this.segmentLength && dist > 0.001) {
+                    const tension = (dist - this.segmentLength) * 0.0003;
+                    Body.applyForce(block, block.position, {
+                        x: (dx / dist) * tension,
+                        y: (dy / dist) * tension
+                    });
+                }
+            }
+            
+            updatePulleyRotations() {
+                const fp = fixedPulley;
+                const mp = movablePulleyBody.position;
+                
+                // 定滑轮旋转
+                let fpVel = 0, fpCount = 0;
+                for (let i = 1; i < this.points.length - 1; i++) {
+                    const p = this.points[i];
+                    const dx = p.x - fp.x;
+                    const dy = p.y - fp.y;
+                    if (Math.sqrt(dx*dx + dy*dy) < fp.radius + 8) {
+                        fpVel += (p.x - p.oldX);
+                        fpCount++;
+                    }
+                }
+                if (fpCount > 0) {
+                    fixedPulley.angle += (fpVel / fpCount) * 0.03;
+                }
+                
+                // 动滑轮旋转
+                let mpVel = 0, mpCount = 0;
+                for (let i = 1; i < this.points.length - 1; i++) {
+                    const p = this.points[i];
+                    const dx = p.x - mp.x;
+                    const dy = p.y - mp.y;
+                    if (Math.sqrt(dx*dx + dy*dy) < movablePulleyRadius + 8) {
+                        mpVel += (p.x - p.oldX);
+                        mpCount++;
+                    }
+                }
+                if (mpCount > 0) {
+                    movablePulleyAngle += (mpVel / mpCount) * 0.03;
+                }
+            }
+            
+            render(ctx) {
+                // 绳子主体
+                ctx.beginPath();
+                ctx.moveTo(this.points[0].x, this.points[0].y);
+                for (let i = 1; i < this.points.length; i++) {
+                    ctx.lineTo(this.points[i].x, this.points[i].y);
+                }
+                ctx.strokeStyle = '#ffcc00';
+                ctx.lineWidth = 4;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.stroke();
+                
+                // 发光
+                ctx.strokeStyle = 'rgba(255, 200, 0, 0.2)';
+                ctx.lineWidth = 10;
+                ctx.stroke();
+            }
+        }
+        
+        // 创建绳子
+        const rope = new Rope(70);
+        
+        // ========== 渲染函数 ==========
+        function renderPulley(ctx, x, y, radius, angle, color, label, isFixed) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(angle);
+            
+            // 外圈
+            ctx.beginPath();
+            ctx.arc(0, 0, radius, 0, Math.PI * 2);
+            ctx.fillStyle = '#151520';
+            ctx.fill();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.stroke();
+            
+            // 凹槽
+            ctx.beginPath();
+            ctx.arc(0, 0, radius - 4, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+            ctx.lineWidth = 6;
+            ctx.stroke();
+            
+            // 辐条
+            ctx.strokeStyle = color + '44';
+            ctx.lineWidth = 2;
+            for (let i = 0; i < 5; i++) {
+                const a = (i / 5) * Math.PI * 2;
+                ctx.beginPath();
+                ctx.moveTo(0, 0);
+                ctx.lineTo(Math.cos(a) * radius * 0.7, Math.sin(a) * radius * 0.7);
+                ctx.stroke();
+            }
+            
+            // 中心
+            ctx.beginPath();
+            ctx.arc(0, 0, 6, 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+            
+            ctx.restore();
+            
+            // 标签
+            ctx.font = 'bold 12px monospace';
+            ctx.fillStyle = color;
+            ctx.textAlign = 'center';
+            ctx.fillText(label, x, y - radius - 10);
+            
+            // 固定点标记
+            if (isFixed) {
+                ctx.fillStyle = '#333';
+                ctx.fillRect(x - 15, y - radius - 35, 30, 20);
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x - 15, y - radius - 35, 30, 20);
+            }
+        }
+        
+        function renderBlock(ctx, body) {
+            const v = body.vertices;
+            ctx.beginPath();
+            ctx.moveTo(v[0].x, v[0].y);
+            for (let i = 1; i < v.length; i++) {
+                ctx.lineTo(v[i].x, v[i].y);
+            }
+            ctx.closePath();
+            
+            const grad = ctx.createLinearGradient(
+                body.position.x - 25, body.position.y - 25,
+                body.position.x + 25, body.position.y + 25
+            );
+            grad.addColorStop(0, '#ff00aa');
+            grad.addColorStop(1, '#aa0066');
+            ctx.fillStyle = grad;
+            ctx.fill();
+            
+            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // 提示文字
+            ctx.font = '10px monospace';
+            ctx.fillStyle = '#fff';
+            ctx.textAlign = 'center';
+            ctx.fillText('拖我', body.position.x, body.position.y + 3);
+        }
+        
+        function renderAnchor(ctx) {
+            // 墙上的固定点
+            ctx.fillStyle = '#333';
+            ctx.fillRect(anchor.x - 20, anchor.y - 25, 25, 50);
+            
+            ctx.beginPath();
+            ctx.arc(anchor.x, anchor.y, 8, 0, Math.PI * 2);
+            ctx.fillStyle = '#555';
+            ctx.fill();
+            ctx.strokeStyle = '#00f5ff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+        
+        // ========== 主循环 ==========
+        function loop() {
+            // 物理更新
+            Engine.update(engine, 1000/60);
+            rope.update();
+            
+            // 清屏
+            ctx.fillStyle = '#0a0a0f';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // 网格背景
+            ctx.strokeStyle = 'rgba(255,255,255,0.02)';
+            ctx.lineWidth = 1;
+            for (let x = 0; x < canvas.width; x += 40) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+            for (let y = 0; y < canvas.height; y += 40) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // 顶部横梁
+            ctx.fillStyle = '#1a1a25';
+            ctx.fillRect(anchor.x - 30, 60, fixedPulley.x - anchor.x + 80, 15);
+            
+            // 地面
+            ctx.fillStyle = '#1a1a25';
+            ctx.fillRect(0, canvas.height - 25, canvas.width, 50);
+            
+            // 锚点
+            renderAnchor(ctx);
+            
+            // 绳子
+            rope.render(ctx);
+            
+            // 定滑轮
+            renderPulley(ctx, fixedPulley.x, fixedPulley.y, fixedPulley.radius, 
+                        fixedPulley.angle, '#00f5ff', '定滑轮', true);
+            
+            // 动滑轮
+            const mp = movablePulleyBody.position;
+            renderPulley(ctx, mp.x, mp.y, movablePulleyRadius, 
+                        movablePulleyAngle, '#00ff88', '动滑轮', false);
+            
+            // 方块
+            renderBlock(ctx, block);
+            
+            requestAnimationFrame(loop);
+        }
+        
+        // 窗口调整
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+        
+        loop();
+    </script>
+</body>
+</html>
