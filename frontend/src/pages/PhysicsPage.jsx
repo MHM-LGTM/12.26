@@ -12,7 +12,6 @@ import InputSelector from '../components/InputSelector.jsx';
 import PhysicsInputBox from '../components/PhysicsInputBox.jsx';
 import MyAnimationsPanel from '../components/MyAnimationsPanel.jsx';
 import PlazaPanel from '../components/PlazaPanel.jsx';
-import AnimationInfoBar from '../components/AnimationInfoBar.jsx';
 import LoginModal from '../components/Auth/LoginModal.jsx';
 import UserMenu from '../components/Auth/UserMenu.jsx';
 import useAuthStore from '../store/authStore.js';
@@ -68,12 +67,8 @@ export default function PhysicsPage() {
       <PhysicsInputBox 
         ref={physicsBoxRef}
         animationSource={currentAnimationSource}
-      />
-
-      {/* 阶段三新增：广场动画信息区（画布下方） */}
-      <AnimationInfoBar 
-        animationInfo={plazaAnimationInfo}
-        onClose={() => setPlazaAnimationInfo(null)}
+        plazaAnimationInfo={plazaAnimationInfo}
+        onClosePlazaInfo={() => setPlazaAnimationInfo(null)}
       />
 
       {/* 阶段二新增：我的动画面板 */}

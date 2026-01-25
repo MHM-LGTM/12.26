@@ -107,7 +107,7 @@ export default function ShareLinkModal({ isOpen, onClose, animationId, existingS
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        zIndex: 1000,
+        zIndex: 99999,
         backdropFilter: 'blur(4px)'
       }}
       onClick={onClose}

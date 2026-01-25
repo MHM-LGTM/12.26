@@ -114,14 +114,15 @@
  *
  * 1. 凹凸性判断：完全由后端大模型负责，通过 is_concave 字段传递
  *
- * 2. 静态凹面体：使用"三角形扇形分解法"
- *    - 计算多边形质心
- *    - 从质心向每条边创建三角形
- *    - 所有三角形组成一个 Composite（组合体）
- *    - 每个三角形都是静态刚体，整体模拟凹形碰撞
+ * 2. 静态凹面体：使用"DP简化 + poly-decomp凸分解"
+ *    - 步骤1：Douglas-Peucker 算法简化轮廓（减少冗余点）
+ *    - 步骤2：poly-decomp 库将凹多边形分解为多个凸多边形
+ *    - 所有凸多边形组成一个 Composite（组合体）
+ *    - 每个凸多边形都是静态刚体，整体模拟凹形碰撞
+ *    - 优势：凸多边形比三角形更大，数量更少，性能更好
  *
  * 3. 动态凹面体：使用凸包近似
- *    - 因为多个独立三角形无法保持刚性运动（会散开）
+ *    - 因为多个独立凸多边形无法保持刚性运动（会散开）
  *    - 所以动态凹面体使用凸包近似，牺牲碰撞精度换取稳定性
  *
  *
@@ -138,6 +139,14 @@
  */
 
 import Matter from 'matter-js';
+import decomp from 'poly-decomp';
+
+// 全局注册 poly-decomp 到 Matter.js（某些版本的 Matter.js 需要）
+// 这确保 Matter.js 内部可以使用 poly-decomp 进行凸分解
+if (typeof window !== 'undefined') {
+  window.decomp = decomp;
+}
+Matter.Common.setDecomp(decomp);
 
 
 // ╔═══════════════════════════════════════════════════════════════════╗
@@ -145,6 +154,28 @@ import Matter from 'matter-js';
 // ║  包含几何计算、轮廓处理等工具函数                                    ║
 // ║  这些函数被主函数 runSimulation() 调用                             ║
 // ╚═══════════════════════════════════════════════════════════════════╝
+
+
+// ═══════════════════════════════════════════════════════════════════
+// 凹面体处理参数配置
+// ═══════════════════════════════════════════════════════════════════
+
+/**
+ * Douglas-Peucker 算法的容差阈值（单位：像素）
+ * 
+ * 【作用】控制路径简化的程度
+ * 【调整建议】
+ * - 1.0-2.0：保留更多细节，适合有细小凹陷的物体
+ * - 2.5-3.5：平衡性能和精度（推荐默认值）
+ * - 4.0+：激进简化，可能丢失重要特征
+ * 
+ * 【影响】
+ * - 值越小：简化后的点越多，物理模拟越精确但性能略低
+ * - 值越大：简化后的点越少，性能更好但可能丢失形状细节
+ * 
+ * ⚠️ 如需调整，修改下面的数值即可
+ */
+const DP_EPSILON = 1;
 
 
 /**
@@ -175,10 +206,8 @@ function polygonArea(points) {
  * 计算多边形质心（几何中心）
  * -------------------------
  * 【功能】计算多边形所有顶点的平均位置
- * 【用途】
- *   1. 三角形扇形分解时作为扇形中心点
- *   2. 物体定位参考点
- * 【调用位置】decomposeToTriangleFan() 函数中
+ * 【用途】物体定位参考点
+ * 【调用位置】一些辅助计算中
  *
  * 【注意】这是简化的质心计算（顶点平均），不是精确的面积质心
  *        对于物理模拟来说足够精确
@@ -232,79 +261,180 @@ function toConvexHull(points) {
 
 
 /**
- * 三角形扇形分解（处理凹多边形的核心算法）
- * ----------------------------------------
- * 【功能】将凹多边形分解为多个三角形
- * 【用途】静态凹面体的碰撞检测
- * 【调用位置】runSimulation() 中静态凹面体处理分支
+ * Douglas-Peucker 路径简化算法
+ * ---------------------------
+ * 【功能】简化多边形轮廓，减少顶点数量但保持形状特征
+ * 【用途】处理 SAM 提取的密集轮廓点（可能上千个点）
+ * 【调用位置】runSimulation() 中静态凹面体处理前
  *
  * 【原理】
+ * 通过递归分治，保留关键特征点，删除接近直线的冗余点
+ * 1. 连接起点和终点形成基线
+ * 2. 找到距离基线最远的点
+ * 3. 如果距离 > epsilon，保留该点并递归处理两段
+ * 4. 如果距离 <= epsilon，删除中间所有点
  *
- *         P1
- *        /  \
- *       / T1 \
- *      /      \
- *    P0---C----P2     C = 质心
- *      \      /       T1 = 三角形 (C, P0, P1)
- *       \ T2 /        T2 = 三角形 (C, P1, P2)
- *        \  /         ... 以此类推
- *         P3
+ * 【参数调整】
+ * epsilon 值控制简化程度：
+ * - 较小值 (1.0-2.0)：保留更多细节，适合细小凹陷
+ * - 中等值 (2.5-3.5)：平衡性能和精度（推荐）
+ * - 较大值 (4.0+)：激进简化，可能丢失重要特征
+ * 
+ * ⚠️ 调整位置：在本文件搜索 "DP_EPSILON" 常量
  *
- * 步骤：
- * 1. 计算多边形的质心 C
- * 2. 对于每条边 (P[i], P[i+1])，创建三角形 (C, P[i], P[i+1])
- * 3. 所有三角形组合起来完整覆盖多边形区域
- *
- * 【优点】
- * - 三角形是最简单的凸多边形，Matter.js 处理非常稳定
- * - 不依赖复杂的凸分解算法（如 poly-decomp 库）
- * - 适用于任意形状的凹多边形
- *
- * 【限制】
- * - 只适用于静态物体（三角形组合不能作为刚性整体运动）
- *
- * @param {Array} points - 多边形顶点数组 [{x: number, y: number}, ...]
- * @returns {Array} - 三角形数组，每个元素是包含三个顶点的数组
+ * @param {Array} points - 原始轮廓点 [{x, y}, ...]
+ * @param {number} epsilon - 容差阈值（像素）
+ * @returns {Array} - 简化后的轮廓点
  */
-function decomposeToTriangleFan(points) {
-  if (!points || points.length < 3) return [];
+function douglasPeucker(points, epsilon) {
+  if (!points || points.length < 3) return points;
 
-  // 步骤1：计算质心作为扇形中心
-  const centroid = calculateCentroid(points);
+  // 计算点到线段的垂直距离
+  const pointToLineDistance = (p, lineStart, lineEnd) => {
+    const dx = lineEnd.x - lineStart.x;
+    const dy = lineEnd.y - lineStart.y;
+    const lineLengthSquared = dx * dx + dy * dy;
+    
+    if (lineLengthSquared === 0) {
+      // 线段退化为点
+      const pdx = p.x - lineStart.x;
+      const pdy = p.y - lineStart.y;
+      return Math.sqrt(pdx * pdx + pdy * pdy);
+    }
+    
+    // 投影参数
+    const t = ((p.x - lineStart.x) * dx + (p.y - lineStart.y) * dy) / lineLengthSquared;
+    
+    // 找到垂足
+    const projX = lineStart.x + t * dx;
+    const projY = lineStart.y + t * dy;
+    
+    // 计算距离
+    const distX = p.x - projX;
+    const distY = p.y - projY;
+    return Math.sqrt(distX * distX + distY * distY);
+  };
 
-  // 步骤2：从质心向每条边创建三角形
-  const triangles = [];
-  for (let i = 0; i < points.length; i++) {
-    const p1 = points[i];                         // 当前顶点
-    const p2 = points[(i + 1) % points.length];   // 下一个顶点（循环）
+  // 递归简化
+  const simplify = (pts, startIdx, endIdx) => {
+    if (endIdx - startIdx < 2) {
+      // 只有两个点，无需简化
+      return [pts[startIdx], pts[endIdx]];
+    }
 
-    // 创建三角形：质心 -> 当前顶点 -> 下一个顶点
-    // 顺序很重要，决定了三角形的朝向
-    triangles.push([
-      { x: centroid.x, y: centroid.y },
-      { x: p1.x, y: p1.y },
-      { x: p2.x, y: p2.y },
-    ]);
+    let maxDist = 0;
+    let maxIdx = startIdx;
+
+    // 找到距离起点-终点连线最远的点
+    for (let i = startIdx + 1; i < endIdx; i++) {
+      const dist = pointToLineDistance(pts[i], pts[startIdx], pts[endIdx]);
+      if (dist > maxDist) {
+        maxDist = dist;
+        maxIdx = i;
+      }
+    }
+
+    // 判断是否需要保留该点
+    if (maxDist > epsilon) {
+      // 递归处理两段
+      const left = simplify(pts, startIdx, maxIdx);
+      const right = simplify(pts, maxIdx, endIdx);
+      // 合并结果（去除重复的中间点）
+      return [...left.slice(0, -1), ...right];
+    } else {
+      // 删除中间所有点
+      return [pts[startIdx], pts[endIdx]];
+    }
+  };
+
+  const simplified = simplify(points, 0, points.length - 1);
+  
+  // 确保闭合多边形（首尾点应该接近）
+  const first = simplified[0];
+  const last = simplified[simplified.length - 1];
+  const dist = Math.sqrt((first.x - last.x) ** 2 + (first.y - last.y) ** 2);
+  
+  // 如果首尾距离很小，移除最后一个点避免重复
+  if (dist < 1 && simplified.length > 3) {
+    simplified.pop();
   }
 
-  return triangles;
+  return simplified;
 }
 
 
 /**
- * 计算三角形的质心
- * ----------------
- * 【功能】计算三角形三个顶点的平均位置
- * 【用途】创建三角形刚体时确定中心点位置
- * 【调用位置】runSimulation() 中三角形刚体创建
+ * 凸分解算法（使用 poly-decomp.js）
+ * --------------------------------
+ * 【功能】将凹多边形分解为多个凸多边形
+ * 【用途】静态凹面体的碰撞检测
+ * 【调用位置】runSimulation() 中静态凹面体处理分支
  *
- * @param {Array} triangle - 三个顶点的数组 [{x, y}, {x, y}, {x, y}]
- * @returns {{x: number, y: number}} - 三角形质心
+ * 【原理】
+ * 使用 poly-decomp 库的凸分解算法：
+ * 1. 识别内角 > 180° 的"凹点"
+ * 2. 在凹点处切割多边形
+ * 3. 递归处理每个子多边形，直到全部为凸多边形
+ *
+ * 【优点】
+ * - 生成的是凸多边形（比三角形更大，数量更少）
+ * - 每个凸多边形独立处理碰撞，组合实现凹形效果
+ * - 避免过度细分，提升物理引擎性能
+ *
+ * 【限制】
+ * - 只适用于静态物体（多个凸多边形组合不能作为刚性整体运动）
+ * - 要求输入多边形无自相交
+ *
+ * @param {Array} points - 多边形顶点数组 [{x: number, y: number}, ...]
+ * @returns {Array} - 凸多边形数组，每个元素是包含顶点的数组
  */
-function triangleCentroid(triangle) {
+function decomposeToConvexPolygons(points) {
+  if (!points || points.length < 3) return [];
+
+  try {
+    // 转换为 poly-decomp 所需的格式：[[x1, y1], [x2, y2], ...]
+    const polyDecompFormat = points.map(p => [p.x, p.y]);
+
+    // 确保多边形是逆时针方向（Matter.js 和 poly-decomp 要求）
+    decomp.makeCCW(polyDecompFormat);
+
+    // 执行凸分解
+    const convexPolygons = decomp.quickDecomp(polyDecompFormat);
+
+    // 转换回 Matter.js 格式：[{x, y}, {x, y}, ...]
+    return convexPolygons.map(poly => 
+      poly.map(vertex => ({ x: vertex[0], y: vertex[1] }))
+    );
+
+  } catch (error) {
+    console.error('[凸分解] poly-decomp 分解失败:', error);
+    // 分解失败时返回空数组，让调用方回退到凸包方案
+    return [];
+  }
+}
+
+
+/**
+ * 计算多边形质心（用于 fromVertices）
+ * ----------------------------------
+ * 【功能】计算凸多边形的几何中心
+ * 【用途】创建凸多边形刚体时确定中心点位置
+ * 【调用位置】runSimulation() 中凸分解后的刚体创建
+ *
+ * @param {Array} polygon - 顶点数组 [{x, y}, {x, y}, ...]
+ * @returns {{x: number, y: number}} - 多边形质心
+ */
+function polygonCentroid(polygon) {
+  if (!polygon || polygon.length === 0) return { x: 0, y: 0 };
+  
+  const sum = polygon.reduce(
+    (acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }),
+    { x: 0, y: 0 }
+  );
+  
   return {
-    x: (triangle[0].x + triangle[1].x + triangle[2].x) / 3,
-    y: (triangle[0].y + triangle[1].y + triangle[2].y) / 3,
+    x: sum.x / polygon.length,
+    y: sum.y / polygon.length,
   };
 }
 
@@ -375,7 +505,8 @@ function preprocessContour(points) {
  *   objects: responseData.objects,
  *   constraints: constraintRelations,  // 约束关系数组（2025-11-23 新增）
  *   imageRect: imageElement.getBoundingClientRect(),
- *   naturalSize: { w: image.naturalWidth, h: image.naturalHeight }
+ *   naturalSize: { w: image.naturalWidth, h: image.naturalHeight },
+ *   frozen: false  // 是否创建冻结的刚体（2026-01-21 新增）
  * });
  * ```
  *
@@ -402,9 +533,14 @@ function preprocessContour(points) {
  *        - { w: 原图宽度, h: 原图高度 }
  *        - 用于计算坐标缩放比例（后端轮廓使用原图坐标）
  *
- * @returns {Object} - 返回模拟状态摘要 { summary: string }
+ * @param {boolean} options.frozen - 是否创建冻结的刚体（2026-01-21 新增）
+ *        - true: 创建所有刚体但全部静止，不启动物理引擎
+ *        - false: 正常模式，创建后立即启动物理模拟
+ *        - 用途：加载保存的动画时先显示完整画面，等用户点击"开始模拟"再激活
+ *
+ * @returns {Object} - 返回模拟控制器 { summary: string, stop: function, unfreeze: function }
  */
-export function runSimulation({ container, objects = [], constraints = [], imageRect, naturalSize = { w: 0, h: 0 } }) {
+export function runSimulation({ container, objects = [], constraints = [], imageRect, naturalSize = { w: 0, h: 0 }, frozen = false }) {
 
   // ────────────────────────────────────────────────────────────────
   // 第一部分：布局计算
@@ -543,7 +679,7 @@ export function runSimulation({ container, objects = [], constraints = [], image
     // 步骤4：提取物理参数
     // 这些参数来自后端大模型对物体的分析
     // ──────────────────────────────────────────────────────────────
-    const restitution = Number(obj?.parameters?.restitution ?? 0.0);           // 弹性系数 (0-1)
+    const restitution = Number(obj?.parameters?.restitution ?? 0.5);           // 弹性系数 (0-1)
     const friction = Number(obj?.parameters?.friction_coefficient ?? 0.2);     // 摩擦系数
     const air = Number(obj?.parameters?.air_drag ?? 0.0);                      // 空气阻力
 
@@ -563,11 +699,20 @@ export function runSimulation({ container, objects = [], constraints = [], image
 
     if (!isConcave) {
       // ═══════════════════════════════════════════════════════════
-      // 情况A：凸多边形 - 直接创建单个刚体
-      // Matter.js 原生支持凸多边形，直接使用 Bodies.fromVertices
+      // 情况A：凸多边形 - 强制使用凸包创建单个刚体
+      // 
+      // 【重要】即使后端标识为凸面体，SAM 分割的轮廓仍可能有微小凹点
+      // （由于图像噪声、锯齿等），如果直接使用原始轮廓，Matter.js
+      // 检测到凹点后会自动调用 poly-decomp 分解，导致单个刚体被
+      // 分解成多个小刚体。
+      // 
+      // 【解决方案】对所有标识为凸面体的物体强制使用凸包算法，
+      // 确保生成的顶点集一定是凸的，避免被意外分解。
       // ═══════════════════════════════════════════════════════════
 
-      const verts = Vertices.create(processed, Matter);
+      // 强制转换为凸包，消除 SAM 噪声影响
+      const hullPoints = toConvexHull(processed);
+      const verts = Vertices.create(hullPoints, Matter);
       const center = Matter.Vertices.centre(verts);  // 计算顶点集的中心
 
       // 使用 Bodies.fromVertices 创建刚体
@@ -599,64 +744,78 @@ export function runSimulation({ container, objects = [], constraints = [], image
           body.label = 'conveyor';
           conveyorParams.set(bodyName, { speed: isNaN(speed) ? 0 : speed });
         }
-        console.log(`[物理引擎] 凸多边形创建成功: ${bodyName}`);
+        console.log(`[物理引擎] 凸多边形创建成功 (凸包): ${bodyName}`);
       }
 
     } else if (isStatic) {
       // ═══════════════════════════════════════════════════════════
-      // 情况B：静态凹面体 - 三角形扇形分解
+      // 情况B：静态凹面体 - DP简化 + poly-decomp凸分解
       //
-      // 原理：将凹多边形分解为多个三角形，每个三角形是独立的静态刚体
-      //       这些三角形组成一个 Composite（组合体），共同模拟凹形碰撞
+      // 原理：
+      // 1. 使用 Douglas-Peucker 算法简化轮廓（减少点数）
+      // 2. 使用 poly-decomp 库将凹多边形分解为多个凸多边形
+      // 3. 每个凸多边形是独立的静态刚体，组合起来模拟凹形碰撞
       //
       // 为什么可行：
-      // - 静态物体不需要运动，所以多个三角形不需要保持相对位置
-      // - 每个三角形独立处理碰撞，组合起来实现凹形碰撞检测
+      // - 静态物体不需要运动，所以多个凸多边形不需要保持相对位置
+      // - 每个凸多边形独立处理碰撞，组合起来实现凹形碰撞检测
+      // - 相比三角形扇形分解，凸多边形数量更少，性能更好
       // ═══════════════════════════════════════════════════════════
 
-      const triangles = decomposeToTriangleFan(processed);
+      // 步骤1：使用 DP 算法简化轮廓
+      const simplified = douglasPeucker(processed, DP_EPSILON);
 
-      // 分解失败时回退到凸包方案
-      if (triangles.length === 0) {
-        console.warn(`[物理引擎] 三角形分解失败，回退到凸包: ${obj.name || '未命名'}`);
-        createConvexHullBody(processed, obj, isStatic, friction, air, restitution, sx, sy, Bodies, Vertices, Body, Composite, engine);
+      if (simplified.length < 3) {
+        console.warn(`[物理引擎] DP简化后顶点不足，回退到凸包: ${obj.name || '未命名'}`);
+        createConvexHullBody(processed, obj, isStatic, friction, air, restitution, sx, sy, Bodies, Vertices, Body, Composite, engine, bodiesMap);
         return;
       }
 
-      // 创建 Composite 容器，用于组织所有三角形
-      // Composite 是 Matter.js 中组织多个物体的方式
+      console.log(`[物理引擎] DP简化: ${processed.length} 点 → ${simplified.length} 点`);
+
+      // 步骤2：使用 poly-decomp 进行凸分解
+      const convexPolygons = decomposeToConvexPolygons(simplified);
+
+      // 分解失败时回退到凸包方案
+      if (convexPolygons.length === 0) {
+        console.warn(`[物理引擎] 凸分解失败，回退到凸包: ${obj.name || '未命名'}`);
+        createConvexHullBody(processed, obj, isStatic, friction, air, restitution, sx, sy, Bodies, Vertices, Body, Composite, engine, bodiesMap);
+        return;
+      }
+
+      // 创建 Composite 容器，用于组织所有凸多边形
       const concaveComposite = Composite.create({
         label: `凹面体-${obj.name || '未命名'}`
       });
 
-      // 为每个三角形创建独立的刚体
-      triangles.forEach((tri, idx) => {
-        const triCenter = triangleCentroid(tri);           // 三角形质心
-        const triVerts = Vertices.create(tri, Matter);     // 三角形顶点
+      // 为每个凸多边形创建独立的刚体
+      convexPolygons.forEach((polygon, idx) => {
+        // 使用 Matter.js 内置的 centre 方法计算中心点，确保坐标系一致
+        const polyVerts = Vertices.create(polygon, Matter);  // 先创建顶点
+        const polyCenter = Matter.Vertices.centre(polyVerts); // 使用 Matter.js 的方法计算中心
 
-        const triBody = Bodies.fromVertices(triCenter.x, triCenter.y, triVerts, {
-          isStatic: true,       // 静态凹面体的所有三角形都是静态的
+        const polyBody = Bodies.fromVertices(polyCenter.x, polyCenter.y, polyVerts, {
+          isStatic: true,       // 静态凹面体的所有凸多边形都是静态的
           friction,
           frictionStatic: 0.5,
           restitution,
           render: {
-            // 三角形使用统一的填充色
-            // 不使用 sprite 贴图，因为多个三角形会导致贴图重叠
+            // 凸多边形使用统一的填充色（不使用贴图）
             fillStyle: '#94a3b8',
-            // 调试时可以取消注释下面两行，显示三角形边框
+            // 调试时可以取消注释下面两行，显示多边形边框
             // strokeStyle: '#64748b',
             // lineWidth: 1,
           },
         });
 
-        if (triBody) {
-          Composite.add(concaveComposite, triBody);
+        if (polyBody) {
+          Composite.add(concaveComposite, polyBody);
         }
       });
 
       // 将整个 Composite 添加到物理世界
       Composite.add(engine.world, concaveComposite);
-      console.log(`[物理引擎] 静态凹面体创建成功: ${obj.name || '未命名'}, 分解为 ${triangles.length} 个三角形`);
+      console.log(`[物理引擎] 静态凹面体创建成功: ${obj.name || '未命名'}, 分解为 ${convexPolygons.length} 个凸多边形`);
 
     } else {
       // ═══════════════════════════════════════════════════════════
@@ -670,10 +829,7 @@ export function runSimulation({ container, objects = [], constraints = [], image
       // ═══════════════════════════════════════════════════════════
 
       console.log(`[物理引擎] 动态凹面体使用凸包近似: ${obj.name || '未命名'}`);
-      // 注意：createConvexHullBody 内部也需要添加到 bodiesMap，但由于其是独立函数，
-      // 这里采用在函数返回后手动查找的方式暂不实现（简化版）
-      // 后续可以改造 createConvexHullBody 返回创建的 body
-      createConvexHullBody(processed, obj, isStatic, friction, air, restitution, sx, sy, Bodies, Vertices, Body, Composite, engine);
+      createConvexHullBody(processed, obj, isStatic, friction, air, restitution, sx, sy, Bodies, Vertices, Body, Composite, engine, bodiesMap);
     }
   });
 
@@ -919,7 +1075,38 @@ export function runSimulation({ container, objects = [], constraints = [], image
 
   // 创建并启动物理引擎更新循环
   const runner = Runner.create();
-  Runner.run(runner, engine);
+  
+  // ========================================================================
+  // 【核心改动】冻结模式处理（2026-01-21 新增）
+  // 如果 frozen = true，将所有动态刚体设置为静态，并且不启动物理引擎
+  // ========================================================================
+  let frozenBodies = [];  // 保存被冻结的刚体，用于后续解冻
+  
+  if (frozen) {
+    console.log('[物理引擎] 冻结模式：将所有动态刚体设置为静态');
+    // 遍历世界中的所有刚体
+    const allBodies = Composite.allBodies(engine.world);
+    for (const body of allBodies) {
+      if (!body.isStatic && body.label !== 'conveyor') {
+        // 保存原始速度信息
+        body._frozenVelocity = { x: body.velocity.x, y: body.velocity.y };
+        body._frozenAngularVelocity = body.angularVelocity;
+        
+        // 清零速度
+        Body.setVelocity(body, { x: 0, y: 0 });
+        Body.setAngularVelocity(body, 0);
+        
+        // 标记为已冻结
+        body._isFrozen = true;
+        frozenBodies.push(body);
+      }
+    }
+    console.log(`[物理引擎] 已冻结 ${frozenBodies.length} 个动态刚体`);
+    // 不启动 runner，保持静止状态
+  } else {
+    // 正常模式：启动物理引擎
+    Runner.run(runner, engine);
+  }
 
   // 传送带推进逻辑：在每帧更新前对接触传送带的物体设置水平速度并锁定角速度
   const onBeforeUpdate = () => {
@@ -953,7 +1140,49 @@ export function runSimulation({ container, objects = [], constraints = [], image
   // 返回模拟控制器与状态摘要
   const constraintCount = constraints?.length || 0;
   return {
-    summary: `模拟运行中：对象数=${objects.length}${constraintCount > 0 ? `，约束数=${constraintCount}` : ''}`,
+    summary: frozen 
+      ? `预览模式：对象数=${objects.length}${constraintCount > 0 ? `，约束数=${constraintCount}` : ''}（点击"开始模拟"启动物理效果）`
+      : `模拟运行中：对象数=${objects.length}${constraintCount > 0 ? `，约束数=${constraintCount}` : ''}`,
+    
+    // ========================================================================
+    // 【新增】unfreeze 方法：解除冻结，启动物理模拟
+    // ========================================================================
+    unfreeze: () => {
+      if (!frozen || frozenBodies.length === 0) {
+        console.log('[物理引擎] 已经在运行中，无需解冻');
+        return;
+      }
+      
+      console.log('[物理引擎] 解除冻结，启动物理模拟');
+      
+      // 恢复所有冻结刚体的速度
+      for (const body of frozenBodies) {
+        if (body._isFrozen) {
+          // 恢复原始速度（通常是0，除非有初速度设置）
+          if (body._frozenVelocity) {
+            Body.setVelocity(body, body._frozenVelocity);
+          }
+          if (body._frozenAngularVelocity !== undefined) {
+            Body.setAngularVelocity(body, body._frozenAngularVelocity);
+          }
+          
+          // 清除冻结标记
+          delete body._isFrozen;
+          delete body._frozenVelocity;
+          delete body._frozenAngularVelocity;
+        }
+      }
+      
+      // 启动物理引擎
+      Runner.run(runner, engine);
+      
+      // 更新标志
+      frozen = false;
+      frozenBodies = [];
+      
+      console.log('[物理引擎] 物理模拟已启动');
+    },
+    
     stop: () => {
       console.log('[物理引擎] 停止模拟，清理资源...');
       // 停止循环
@@ -989,7 +1218,7 @@ export function runSimulation({ container, objects = [], constraints = [], image
  * 【功能】使用凸包算法创建刚体
  * 【用途】
  *   1. 动态凹面体的近似处理
- *   2. 三角形分解失败时的回退方案
+ *   2. 凸分解失败时的回退方案
  * 【调用位置】runSimulation() 中动态凹面体处理和分解失败回退
  *
  * @param {Array} processed - 处理后的轮廓点
@@ -1005,8 +1234,9 @@ export function runSimulation({ container, objects = [], constraints = [], image
  * @param {Object} Body - Matter.Body 模块
  * @param {Object} Composite - Matter.Composite 模块
  * @param {Object} engine - Matter.Engine 实例
+ * @param {Object} bodiesMap - 物体名称到刚体的映射表
  */
-function createConvexHullBody(processed, obj, isStatic, friction, air, restitution, sx, sy, Bodies, Vertices, Body, Composite, engine) {
+function createConvexHullBody(processed, obj, isStatic, friction, air, restitution, sx, sy, Bodies, Vertices, Body, Composite, engine, bodiesMap) {
   // 生成凸包顶点
   const hullPoints = toConvexHull(processed);
   const hullVerts = Vertices.create(hullPoints, Matter);
@@ -1027,6 +1257,10 @@ function createConvexHullBody(processed, obj, isStatic, friction, air, restituti
   if (body) {
     applyPhysicsProperties(body, obj, processed, isStatic, Body);
     Composite.add(engine.world, body);
+    
+    // 添加到映射表（用于约束创建）
+    const bodyName = obj.name || `body-${Object.keys(bodiesMap).length}`;
+    bodiesMap[bodyName] = body;
   }
 }
 

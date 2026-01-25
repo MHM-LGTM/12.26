@@ -51,6 +51,8 @@ import { health as apiHealth, uploadImage, segment, simulate } from '../api/phys
 import LoadingSpinner from './LoadingSpinner.jsx';
 import ErrorToast from './ErrorToast.jsx';
 import SaveAnimationModal from './SaveAnimationModal.jsx';
+import LikeButton from './LikeButton.jsx';
+import ShareLinkModal from './ShareLinkModal.jsx';
 import useAuthStore from '../store/authStore';
 import { drawContour, clear, drawDragRect } from '../utils/drawMask.js';
 import { runSimulation } from '../utils/physicsEngine.js';
@@ -136,13 +138,14 @@ const getElementSecondPivotPrompt = (elem) => {
   return typeConfig?.defaultSecondPrompt || '请选择第二个连接点';
 };
 
-const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
+const PhysicsInputBox = forwardRef(({ animationSource, plazaAnimationInfo, onClosePlazaInfo }, ref) => {
   const [serverStatus, setServerStatus] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const [imagePreview, setImagePreview] = useState('');
   const [imagePath, setImagePath] = useState('');
+  const [originalImageUrl, setOriginalImageUrl] = useState(''); // 保存原始上传图片的URL（未经OpenCV处理）
   const [contour, setContour] = useState([]);
   const [lastImageContour, setLastImageContour] = useState([]); // 原图坐标，用于提交后端
   const [imageNaturalSize, setImageNaturalSize] = useState({ w: 0, h: 0 });
@@ -153,11 +156,23 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
   // 阶段一新增：下载动画功能相关状态
   const [canDownload, setCanDownload] = useState(false); // 是否显示下载按钮
   const [showSaveModal, setShowSaveModal] = useState(false); // 是否显示保存弹窗
+  const [showShareModal, setShowShareModal] = useState(false); // 是否显示分享弹窗
   const [currentPlazaAnimationId, setCurrentPlazaAnimationId] = useState(null); // 当前广场动画ID
   const [assignments, setAssignments] = useState([]); // {label, name, role, parameters, contour}
   const [embedMs, setEmbedMs] = useState(null);
   const [aiMs, setAiMs] = useState(null);
   const [doubaoError, setDoubaoError] = useState('');
+  
+  // 2026-01-21 新增：模拟运行状态（用于切换"开始模拟"/"重置"按钮）
+  const [isSimulationRunning, setIsSimulationRunning] = useState(false);
+  
+  // 2026-01-21 新增：分割功能禁用状态（模拟创建后禁用SAM分割）
+  const [isSegmentationDisabled, setIsSegmentationDisabled] = useState(false);
+
+  // 弹窗拖拽相关状态
+  const [popupOffset, setPopupOffset] = useState({ x: 0, y: 0 }); // 弹窗的手动偏移量
+  const [isDraggingPopup, setIsDraggingPopup] = useState(false); // 是否正在拖拽弹窗
+  const [dragStartPos, setDragStartPos] = useState({ x: 0, y: 0 }); // 拖拽开始时的鼠标位置
 
   // ============================================================================
   // 约束系统相关状态（2025-11-23 新增，2025-11-25 扩展支持弹簧系统）
@@ -243,6 +258,12 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
           console.log('[PhysicsInputBox] 已恢复 imagePreview');
         }
 
+        // 恢复原始图片URL（用于封面）
+        if (sceneData.originalImageUrl) {
+          setOriginalImageUrl(sceneData.originalImageUrl);
+          console.log('[PhysicsInputBox] 已恢复 originalImageUrl');
+        }
+
         // 恢复图片尺寸
         if (sceneData.imageNaturalSize) {
           setImageNaturalSize(sceneData.imageNaturalSize);
@@ -267,12 +288,63 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
           console.log('[PhysicsInputBox] 已恢复 constraints，数量:', sceneData.constraints.length);
         }
 
-        // 缓存数据，显示下载按钮
-        simulationCache.current = sceneData;
+        // ========================================================================
+        // 【方案1核心修改】统一缓存格式，确保与后端返回格式一致
+        // 将 sceneData 包装成与 simulate 接口返回相同的格式
+        // ========================================================================
+        simulationCache.current = {
+          key: JSON.stringify({
+            path: sceneData.imagePath || '',
+            items: (sceneData.objects || []).map(a => ({
+              c: a.contour || [],
+              r: a.role || 'unknown',
+              ic: a.is_concave || false
+            }))
+          }),
+          data: {
+            objects: sceneData.objects || [],
+            background_clean_data_url: sceneData.imagePreview || '',
+            simulation_id: '已加载的动画'
+          }
+        };
+        console.log('[PhysicsInputBox] 已设置统一格式的缓存');
+        
         setCanDownload(true);
         
         // 记录广场动画ID（用于Fork）
         setCurrentPlazaAnimationId(plazaAnimationId);
+        
+        // 重置运行状态为未运行
+        setIsSimulationRunning(false);
+        
+        // ========================================================================
+        // 【2026-01-21 新增】加载动画时禁用分割功能
+        // 已经创建好的动画不需要再进行物体分割
+        // ========================================================================
+        setIsSegmentationDisabled(true);
+        console.log('[PhysicsInputBox] 已禁用图像分割功能（动画已创建）');
+
+        // ========================================================================
+        // 【核心改动】立即创建冻结的刚体，让用户看到完整的画面
+        // 使用 setTimeout 确保图片和 DOM 已经渲染完成
+        // ========================================================================
+        setTimeout(() => {
+          if (sceneData.objects && sceneData.objects.length > 0 && imgRef.current && simRef.current) {
+            console.log('[PhysicsInputBox] 创建冻结的刚体预览');
+            
+            const sim = runSimulation({
+              container: simRef.current,
+              objects: sceneData.objects,
+              constraints: sceneData.constraints || [],
+              imageRect: imgRef.current.getBoundingClientRect(),
+              naturalSize: sceneData.imageNaturalSize,
+              frozen: true  // 关键参数：创建冻结的刚体
+            });
+            
+            runningSimulation.current = sim;
+            console.log('[PhysicsInputBox] 冻结的刚体已创建');
+          }
+        }, 100);  // 延迟100ms确保图片加载完成
 
         // 提示用户
         alert('✅ 动画已加载！点击"开始模拟"即可运行');
@@ -349,6 +421,13 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
     try {
       const localUrl = URL.createObjectURL(file);
       setImagePreview(localUrl);
+      
+      // 将图片转换为 data URL 格式（base64），这样可以持久化保存
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setOriginalImageUrl(e.target.result); // 保存为 data URL 格式
+      };
+      reader.readAsDataURL(file);
 
       const resp = await uploadImage(file);
       const data = resp?.data || {};
@@ -361,6 +440,14 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
       setPendingElements(detailed);
       setDoubaoError(data?.doubao_error || '');
       simulationCache.current = null; // 新图片上传，清空缓存
+      
+      // ========================================================================
+      // 【2026-01-21 新增】上传新图片时重新启用分割功能
+      // 这是一个全新的开始，用户需要进行物体分割
+      // ========================================================================
+      setIsSegmentationDisabled(false);
+      setIsSimulationRunning(false);
+      console.log('[PhysicsInputBox] 新图片上传，重新启用图像分割功能');
     } catch (e) {
       setError(e?.response?.data?.message || e?.message || '图片上传失败');
     } finally {
@@ -393,6 +480,15 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
     if (!canvasRef.current) return;
     if (!imagePath) {
       setError('请先上传图片再进行点选/框选');
+      return;
+    }
+
+    // ========================================================================
+    // 【2026-01-21 新增】检查分割功能是否已禁用
+    // 如果模拟已创建，不允许再进行图像分割
+    // ========================================================================
+    if (isSegmentationDisabled && interactionMode === 'segment') {
+      console.log('[PhysicsInputBox] 分割功能已禁用，忽略鼠标操作');
       return;
     }
 
@@ -636,6 +732,16 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
     }
 
     // ========================================================================
+    // 【2026-01-21 新增】检查分割功能是否已禁用
+    // 如果模拟已创建，不允许再进行图像分割
+    // ========================================================================
+    if (isSegmentationDisabled && interactionMode === 'segment') {
+      console.log('[PhysicsInputBox] 分割功能已禁用，忽略鼠标操作');
+      setDragging(false);  // 重置拖拽状态
+      return;
+    }
+
+    // ========================================================================
     // segment 模式：正常的 SAM 分割逻辑
     // ========================================================================
     const start = dragStart;
@@ -695,8 +801,54 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
     }
   };
 
+  // ============================================================================
+  // 弹窗拖拽功能
+  // ============================================================================
+  const handlePopupMouseDown = (e) => {
+    e.stopPropagation(); // 阻止事件冒泡到画布
+    setIsDraggingPopup(true);
+    setDragStartPos({ x: e.clientX, y: e.clientY });
+  };
+
+  const handlePopupMouseMove = (e) => {
+    if (!isDraggingPopup) return;
+    e.stopPropagation();
+    
+    const deltaX = e.clientX - dragStartPos.x;
+    const deltaY = e.clientY - dragStartPos.y;
+    
+    setPopupOffset((prev) => ({
+      x: prev.x + deltaX,
+      y: prev.y + deltaY,
+    }));
+    
+    setDragStartPos({ x: e.clientX, y: e.clientY });
+  };
+
+  const handlePopupMouseUp = (e) => {
+    if (isDraggingPopup) {
+      e.stopPropagation();
+      setIsDraggingPopup(false);
+    }
+  };
+
+  // 监听全局鼠标事件（用于拖拽弹窗）
+  useEffect(() => {
+    if (isDraggingPopup) {
+      window.addEventListener('mousemove', handlePopupMouseMove);
+      window.addEventListener('mouseup', handlePopupMouseUp);
+      return () => {
+        window.removeEventListener('mousemove', handlePopupMouseMove);
+        window.removeEventListener('mouseup', handlePopupMouseUp);
+      };
+    }
+  }, [isDraggingPopup, dragStartPos]);
+
   const assignCurrentSelection = (elem, idx) => {
     if (!elem || !lastImageContour || lastImageContour.length === 0) return;
+
+    // 重置弹窗偏移量
+    setPopupOffset({ x: 0, y: 0 });
 
     // 创建分配对象，保存元素信息和轮廓
     const newAssignment = {
@@ -815,6 +967,71 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
   };
 
   const handleStartSimulate = async () => {
+    // ========================================================================
+    // 【2026-01-21 核心改动】实现"开始模拟 ↔ 重置"切换逻辑
+    // ========================================================================
+    
+    if (isSimulationRunning) {
+      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      // 情况A：点击"重置"按钮 - 停止当前模拟，回到冻结状态
+      // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+      console.log('[PhysicsInputBox] 点击重置，停止模拟并回到初始状态');
+      
+      // 1. 停止当前运行的模拟
+      if (runningSimulation.current) {
+        runningSimulation.current.stop();
+        runningSimulation.current = null;
+      }
+      
+      // 2. 重新创建冻结的刚体（使用缓存的数据）
+      if (simulationCache.current && simulationCache.current.data) {
+        const cachedData = simulationCache.current.data;
+        const serverObjects = cachedData.objects || [];
+        const elements_simple = assignments.map((a) => a.label);
+        const roles = assignments.map((a) => a.role);
+        const parameters_list = assignments.map((a) => a.parameters || {});
+        const is_concave_list = assignments.map((a) => a.is_concave || false);
+        
+        const objects = serverObjects.map((o, idx) => ({
+          name: elements_simple[idx] || o?.name || `elem-${idx}`,
+          role: o?.role ?? roles[idx] ?? 'unknown',
+          parameters: { ...(o?.parameters || {}), ...(parameters_list[idx] || {}) },
+          contour: (o?.contour || assignments[idx].contour || []),
+          sprite_data_url: o?.sprite_data_url || null,
+          is_concave: is_concave_list[idx] || false,
+        }));
+        
+        // 恢复残缺背景图
+        if (cachedData.background_clean_data_url) {
+          setImagePreview(cachedData.background_clean_data_url);
+        }
+        
+        // 创建冻结的模拟
+        setTimeout(() => {
+          if (imgRef.current && simRef.current) {
+            const sim = runSimulation({
+              container: simRef.current,
+              objects,
+              constraints: constraintRelations,
+              imageRect: imgRef.current.getBoundingClientRect(),
+              naturalSize: imageNaturalSize,
+              frozen: true  // 冻结状态
+            });
+            runningSimulation.current = sim;
+            console.log('[PhysicsInputBox] 已重置到初始冻结状态');
+          }
+        }, 50);
+      }
+      
+      // 3. 更新状态
+      setIsSimulationRunning(false);
+      return;
+    }
+    
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // 情况B：点击"开始模拟"按钮 - 启动物理效果
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    
     setLoading(true);
     setError('');
     try {
@@ -826,20 +1043,33 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
         throw new Error(`请先完成 "${pendingPivotSelection.element.label}" 的支点选择`);
       }
 
+      // ────────────────────────────────────────────────────────────────────
+      // 子情况1：已有冻结的刚体（从动画加载或重置后）→ 直接解冻
+      // ────────────────────────────────────────────────────────────────────
+      if (runningSimulation.current && runningSimulation.current.unfreeze) {
+        console.log('[PhysicsInputBox] 检测到冻结的刚体，直接激活物理效果');
+        runningSimulation.current.unfreeze();
+        setIsSimulationRunning(true);
+        alert('✅ 物理模拟已启动！');
+        setLoading(false);
+        return;
+      }
+
+      // ────────────────────────────────────────────────────────────────────
+      // 子情况2：首次创建（现场制作动画）→ 调用后端 → 创建冻结刚体
+      // ────────────────────────────────────────────────────────────────────
       const elements_simple = assignments.map((a) => a.label);
       const contours = assignments.map((a) => a.contour);
       const roles = assignments.map((a) => a.role);
       const parameters_list = assignments.map((a) => a.parameters || {});
 
-      // ----------------------------------------------------------------------
-      // 缓存机制：检查视觉相关属性是否变化（OpenCV处理只依赖这些）
-      // ----------------------------------------------------------------------
+      // 缓存机制：检查视觉相关属性是否变化
       const currentVisualKey = JSON.stringify({
         path: imagePath,
         items: assignments.map(a => ({
-          c: a.contour, // 轮廓坐标
-          r: a.role,    // 角色（影响背景消除）
-          ic: a.is_concave // 凹凸性
+          c: a.contour,
+          r: a.role,
+          ic: a.is_concave
         }))
       });
 
@@ -848,14 +1078,12 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
       let simId = '';
 
       if (simulationCache.current && simulationCache.current.key === currentVisualKey) {
-        // 【缓存命中】直接使用上次的精灵图和背景，跳过后端调用
         console.log('[PhysicsInputBox] 命中缓存，跳过后端 OpenCV 处理');
         const cachedData = simulationCache.current.data;
         serverObjects = cachedData.objects || [];
         backgroundClean = cachedData.background_clean_data_url;
         simId = cachedData.simulation_id;
       } else {
-        // 【缓存未命中】调用后端进行图像处理
         console.log('[PhysicsInputBox] 缓存未命中，调用后端处理');
         const resp = await simulate({ image_path: imagePath, elements_simple, contours, roles, parameters_list });
         
@@ -863,77 +1091,78 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
         backgroundClean = resp?.data?.background_clean_data_url;
         simId = resp?.data?.simulation_id;
 
-        // 更新缓存
         simulationCache.current = {
           key: currentVisualKey,
           data: resp.data
         };
       }
 
-      // 提取前端已保存的 is_concave 标识，用于物理引擎判断凹凸性
       const is_concave_list = assignments.map((a) => a.is_concave || false);
       const objects = serverObjects.map((o, idx) => ({
         name: elements_simple[idx] || o?.name || `elem-${idx}`,
         role: o?.role ?? roles[idx] ?? 'unknown',
-        // 关键修改：参数合并优先级翻转。
-        // 优先使用前端当前的 parameters_list（用户可能修改了质量/摩擦力），
-        // 只有当参数缺失时才回退到 serverObjects（后端返回的通常是旧值）。
         parameters: { ...(o?.parameters || {}), ...(parameters_list[idx] || {}) },
         contour: (o?.contour || contours[idx] || []),
         sprite_data_url: o?.sprite_data_url || null,
-        is_concave: is_concave_list[idx] || false,  // 传递凹面体标识给物理引擎
+        is_concave: is_concave_list[idx] || false,
       }));
-      // 若后端提供"清理后的背景"，直接替换当前预览图为该背景
+
       if (backgroundClean) {
         setImagePreview(backgroundClean);
       }
 
-      // ========================================================================
-      // 将约束关系传递给物理引擎（2025-11-23 新增）
-      // ========================================================================
       console.log('[约束系统] 传递约束关系给物理引擎:', constraintRelations);
 
-      // 清理旧的模拟（如果存在）
+      // 清理旧的模拟
       if (runningSimulation.current) {
-        console.log('[PhysicsInputBox] 发现正在运行的模拟，正在清理...');
         runningSimulation.current.stop();
         runningSimulation.current = null;
       }
 
+      // 【关键改动】首次创建也使用冻结模式，然后立即解冻
       const sim = runSimulation({
         container: simRef.current,
         objects,
-        constraints: constraintRelations,  // 传递约束关系
+        constraints: constraintRelations,
         imageRect: imgRef.current?.getBoundingClientRect?.(),
         naturalSize: imageNaturalSize,
+        frozen: true  // 先创建冻结的刚体
       });
-      runningSimulation.current = sim; // 保存新的模拟实例
+      runningSimulation.current = sim;
 
-      // 阶段一新增：模拟成功后，将精灵图信息更新到 assignments 中
-      console.log('[PhysicsInputBox] ========== 更新 assignments ==========');
-      console.log('[PhysicsInputBox] 当前 assignments:', assignments);
-      console.log('[PhysicsInputBox] objects（含精灵图）:', objects);
-      
+      // 更新 assignments
       const updatedAssignments = assignments.map((a, idx) => {
         const sprite = objects[idx]?.sprite_data_url;
-        console.log(`[PhysicsInputBox] 元素 ${idx} (${a.label}):`, sprite ? '有精灵图' : '无精灵图');
         return {
           ...a,
           sprite_data_url: sprite || a.sprite_data_url
         };
       });
-      
-      console.log('[PhysicsInputBox] 更新后的 assignments:', updatedAssignments);
-      console.log('[PhysicsInputBox] =====================================');
-      
       setAssignments(updatedAssignments);
       
       // 显示下载按钮
       setCanDownload(true);
 
-      alert(`${simId}\n${sim.summary}`);
+      // 立即解冻并启动
+      setTimeout(() => {
+        if (runningSimulation.current && runningSimulation.current.unfreeze) {
+          runningSimulation.current.unfreeze();
+          setIsSimulationRunning(true);
+          
+          // ========================================================================
+          // 【2026-01-21 新增】首次创建模拟后禁用分割功能
+          // 模拟创建完成后，不应该再允许用户进行物体分割
+          // ========================================================================
+          setIsSegmentationDisabled(true);
+          console.log('[PhysicsInputBox] 模拟已创建，禁用图像分割功能');
+          
+          alert(`${simId}\n模拟已启动！`);
+        }
+      }, 100);
+
     } catch (e) {
       setError(e?.message || '模拟创建失败');
+      setIsSimulationRunning(false);
     } finally {
       setLoading(false);
     }
@@ -988,7 +1217,14 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
-                style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', zIndex: 2, cursor: 'crosshair' }}
+                style={{ 
+                  position: 'absolute', 
+                  top: '50%', 
+                  left: '50%', 
+                  transform: 'translate(-50%, -50%)', 
+                  zIndex: 2, 
+                  cursor: isSegmentationDisabled && interactionMode === 'segment' ? 'not-allowed' : 'crosshair' 
+                }}
               />
               <div
                 ref={simRef}
@@ -998,6 +1234,61 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
               {lastImageContour.length > 0 && pendingElements.length > 0 && canvasRef.current && lastMousePos && (() => {
                  const rect = canvasRef.current.getBoundingClientRect();
                  const { x: mouseX, y: mouseY } = lastMousePos;
+
+                 // ============================================================================
+                 // 智能弹窗定位逻辑：确保弹窗始终完整显示在画布内部
+                 // ============================================================================
+                 
+                 // 1. 预估弹窗尺寸
+                 const popupWidth = 160;  // minWidth: 140 + padding: 20
+                 const titleHeight = 28;  // 标题行高度
+                 const buttonHeight = 35; // 每个按钮的高度（含间距）
+                 const popupPadding = 16; // 上下 padding
+                 const popupHeight = titleHeight + (pendingElements.length * buttonHeight) + popupPadding;
+                 
+                 // 2. 计算各方向剩余空间
+                 const spaceRight = rect.width - mouseX;
+                 const spaceBottom = rect.height - mouseY;
+                 const spaceLeft = mouseX;
+                 const spaceTop = mouseY;
+                 
+                 // 3. 安全边距
+                 const safeMargin = 10;
+                 const offset = 12; // 弹窗与鼠标的偏移距离
+                 
+                 // 4. 确定水平位置（优先右侧，空间不足则左侧）
+                 let leftPos;
+                 if (spaceRight >= popupWidth + offset + safeMargin) {
+                   // 右侧空间充足，显示在右侧
+                   leftPos = mouseX + offset;
+                 } else if (spaceLeft >= popupWidth + offset + safeMargin) {
+                   // 右侧不足但左侧充足，显示在左侧
+                   leftPos = mouseX - popupWidth - offset;
+                 } else {
+                   // 两侧都不足，居中显示并限制在画布内
+                   leftPos = mouseX - popupWidth / 2;
+                 }
+                 
+                 // 5. 确定垂直位置（优先下方，空间不足则上方）
+                 let topPos;
+                 if (spaceBottom >= popupHeight + safeMargin) {
+                   // 下方空间充足，显示在下方
+                   topPos = mouseY;
+                 } else if (spaceTop >= popupHeight + safeMargin) {
+                   // 下方不足但上方充足，显示在上方
+                   topPos = mouseY - popupHeight;
+                 } else {
+                   // 上下都不足，居中显示并限制在画布内
+                   topPos = mouseY - popupHeight / 2;
+                 }
+                 
+                 // 6. 最终边界限制，确保弹窗完全在画布内
+                 leftPos = Math.max(safeMargin, Math.min(leftPos, rect.width - popupWidth - safeMargin));
+                 topPos = Math.max(safeMargin, Math.min(topPos, rect.height - popupHeight - safeMargin));
+
+                 // 7. 应用用户拖拽的偏移量
+                 const finalLeftPos = leftPos + popupOffset.x;
+                 const finalTopPos = topPos + popupOffset.y;
 
                  return (
                    <div style={{
@@ -1012,21 +1303,38 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
                    }}>
                      <div style={{
                        position: 'absolute',
-                       left: mouseX,
-                       top: mouseY,
-                       marginLeft: 12,
+                       left: finalLeftPos,
+                       top: finalTopPos,
                        pointerEvents: 'auto',
                        backgroundColor: 'rgba(255, 255, 255, 0.95)',
                        border: '1px solid #e5e7eb',
                        borderRadius: 12,
                        padding: '8px 10px',
-                       boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+                       boxShadow: isDraggingPopup ? '0 8px 24px rgba(0, 0, 0, 0.2)' : '0 4px 12px rgba(0, 0, 0, 0.1)',
                        minWidth: 140,
                        display: 'flex',
                        flexDirection: 'column',
                        gap: 6,
+                       transition: isDraggingPopup ? 'none' : 'all 0.2s ease',
+                       cursor: isDraggingPopup ? 'grabbing' : 'default',
                      }}>
-                       <div style={{ fontSize: 12, color: '#666', marginBottom: 4 }}>请选择元素：</div>
+                       <div 
+                         style={{ 
+                           fontSize: 12, 
+                           color: '#666', 
+                           marginBottom: 4,
+                           cursor: 'grab',
+                           userSelect: 'none',
+                           padding: '2px 0',
+                           display: 'flex',
+                           alignItems: 'center',
+                           gap: 4,
+                         }}
+                         onMouseDown={handlePopupMouseDown}
+                       >
+                         <span style={{ fontSize: 10, opacity: 0.5 }}>⋮⋮</span>
+                         请选择元素：
+                       </div>
                        {pendingElements.map((e, i) => (
                           <button
                             key={(e.display_name || e.name) + i}
@@ -1070,7 +1378,7 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
                     boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)'
                   }}
                 >
-                  开始模拟 →
+                  {isSimulationRunning ? '🔄 重置' : '开始模拟 →'}
                 </button>
                 
                 {canDownload && (
@@ -1092,53 +1400,223 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
             <div className="upload-text">+ 请将图片上传到这里（点击或拖拽）</div>
           )}
         </div>
-        <div className="upload-split-right" />
+        <div className="upload-split-right">
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100%',
+            padding: '20px',
+            textAlign: 'center',
+            color: '#999',
+            fontSize: '14px',
+            lineHeight: '1.6'
+          }}>
+            自定义动画功能暂未开放
+          </div>
+        </div>
       </div>
 
-      {recognizedDetailed && recognizedDetailed.length > 0 && (
-        <div style={{ marginTop: 8, fontSize: 14 }}>
-          <strong>识别到的元素：</strong>
-          {recognizedDetailed.map((elem, idx) => (
-            <span
-              key={`${elem.name}-${idx}`}
-              style={{
-                display: 'inline-block',
-                padding: '4px 8px',
-                borderRadius: 12,
-                backgroundColor: elem.is_concave ? '#fef3c7' : '#eef',  // 凹面体用黄色背景区分
-                color: elem.is_concave ? '#92400e' : '#334',
-                marginRight: 8,
-              }}
-            >
-              {elem.display_name || elem.name}{elem.is_concave ? '（凹面体）' : ''}
-            </span>
-          ))}
-          <span style={{ marginLeft: 8, color: '#666' }}>请在图中框选具体物体进行确认</span>
-        </div>
-      )}
+      {/* 统一信息区域 - 画布下方横向布局（包含识别元素、已选择、约束关系、广场动画信息） */}
+      {(recognizedDetailed.length > 0 || assignments.length > 0 || constraintRelations.length > 0 || plazaAnimationInfo) && (
+        <div style={{ 
+          marginTop: 12, 
+          marginRight: 380,
+          padding: '12px 16px',
+          background: '#f9fafb',
+          border: '1px solid #e5e7eb',
+          borderRadius: 12,
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'space-between',
+          gap: 20,
+          flexWrap: 'wrap'
+        }}>
+          {/* 左侧：所有信息横向排列在同一行 */}
+          <div style={{ flex: '1 1 auto', minWidth: 280, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+            {/* 识别到的元素 */}
+            {recognizedDetailed && recognizedDetailed.length > 0 && (
+              <>
+                <strong style={{ fontSize: 13, color: '#334' }}>识别到的元素：</strong>
+                {recognizedDetailed.map((elem, idx) => (
+                  <span
+                    key={`${elem.name}-${idx}`}
+                    style={{
+                      display: 'inline-block',
+                      padding: '4px 10px',
+                      borderRadius: 10,
+                      backgroundColor: elem.is_concave ? '#fef3c7' : '#eef',
+                      color: elem.is_concave ? '#92400e' : '#334',
+                      fontSize: 12,
+                      fontWeight: 500
+                    }}
+                  >
+                    {elem.display_name || elem.name}{elem.is_concave ? '（凹面体）' : ''}
+                  </span>
+                ))}
+                {assignments.length === 0 && <span style={{ color: '#9ca3af', fontSize: 11 }}>请在图中框选</span>}
+              </>
+            )}
 
+            {/* 分隔符 */}
+            {recognizedDetailed.length > 0 && assignments.length > 0 && (
+              <span style={{ color: '#d1d5db', fontSize: 16, fontWeight: 300 }}>|</span>
+            )}
 
+            {/* 已分配的元素列表与完成进度 */}
+            {assignments.length > 0 && (
+              <>
+                <strong style={{ fontSize: 13, color: '#334' }}>已选择：</strong>
+                {assignments.map((a, i) => (
+                  <span
+                    key={a.label + i}
+                    style={{
+                      display: 'inline-block',
+                      padding: '4px 10px',
+                      borderRadius: 10,
+                      background: a.is_concave ? '#fef3c7' : (a.element_type === 'pendulum_bob' ? '#dbeafe' : '#e0f2fe'),
+                      color: a.is_concave ? '#92400e' : '#0369a1',
+                      fontSize: 12,
+                      fontWeight: 500
+                    }}
+                  >
+                    {a.label}{a.is_concave ? '（凹面体）' : ''}{a.element_type === 'pendulum_bob' ? '🔗' : ''}
+                  </span>
+                ))}
+                <span style={{ color: '#6b7280', fontSize: 12 }}>完成 {assignments.length}/{recognizedDetailed.length}</span>
+              </>
+            )}
 
-      {/* 已分配的元素列表与完成进度 */}
-      {assignments.length > 0 && (
-        <div style={{ marginTop: 8, fontSize: 13, color: '#334' }}>
-          <strong>已选择：</strong>
-          {assignments.map((a, i) => (
-            <span
-              key={a.label + i}
-              style={{
-                display: 'inline-block',
-                marginRight: 8,
-                padding: '2px 6px',
-                borderRadius: 10,
-                background: a.is_concave ? '#fef3c7' : (a.element_type === 'pendulum_bob' ? '#dbeafe' : '#e0f2fe'),  // 摆球用蓝色背景
-                color: a.is_concave ? '#92400e' : '#0369a1',
-              }}
-            >
-              {a.label}{a.is_concave ? '（凹面体）' : ''}{a.element_type === 'pendulum_bob' ? '🔗' : ''}
-            </span>
-          ))}
-          <span style={{ marginLeft: 8, color: '#666' }}>完成 {assignments.length}/{recognizedDetailed.length}</span>
+            {/* 分隔符 */}
+            {constraintRelations.length > 0 && (
+              <span style={{ color: '#d1d5db', fontSize: 16, fontWeight: 300 }}>|</span>
+            )}
+
+            {/* 约束关系显示 */}
+            {constraintRelations.length > 0 && (
+              <>
+                <strong style={{ fontSize: 12, color: '#475569' }}>约束关系：</strong>
+                {constraintRelations.map((c, i) => (
+                  <span
+                    key={`constraint-${i}`}
+                    style={{
+                      display: 'inline-block',
+                      padding: '3px 8px',
+                      borderRadius: 8,
+                      background: '#f0fdf4',
+                      color: '#166534',
+                      border: '1px solid #86efac',
+                      fontSize: 11
+                    }}
+                  >
+                    {c.bodyName} → {c.pivotName}
+                  </span>
+                ))}
+              </>
+            )}
+          </div>
+
+          {/* 右侧：广场动画信息（统一卡片样式） */}
+          {plazaAnimationInfo && (
+            <div style={{
+              flex: '0 0 auto',
+              padding: '8px 14px',
+              background: 'white',
+              border: '1px solid #d1d5db',
+              borderRadius: 10,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+              flexWrap: 'wrap',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+            }}>
+              <span style={{
+                fontSize: 14,
+                fontWeight: 600,
+                color: '#111827'
+              }}>
+                📝 {plazaAnimationInfo.title}
+              </span>
+              
+              <LikeButton 
+                animationId={plazaAnimationInfo.id} 
+                initialLikeCount={plazaAnimationInfo.like_count || 0}
+                size="small"
+              />
+              
+              {plazaAnimationInfo.author_name && (
+                <span style={{
+                  fontSize: 11,
+                  color: '#6b7280',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4
+                }}>
+                  👤 {plazaAnimationInfo.author_name}
+                </span>
+              )}
+              
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowShareModal(true);
+                }}
+                style={{
+                  padding: '5px 10px',
+                  borderRadius: 6,
+                  border: '1px solid #d1d5db',
+                  background: 'white',
+                  color: '#16a34a',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  fontWeight: 500
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = '#f0fdf4';
+                  e.currentTarget.style.borderColor = '#16a34a';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'white';
+                  e.currentTarget.style.borderColor = '#d1d5db';
+                }}
+              >
+                🔗 分享
+              </button>
+
+              <button
+                onClick={onClosePlazaInfo}
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: 10,
+                  border: '1px solid #d1d5db',
+                  background: 'white',
+                  color: '#6b7280',
+                  fontSize: 16,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 0,
+                  flexShrink: 0,
+                  lineHeight: 1
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = '#fee2e2';
+                  e.currentTarget.style.color = '#dc2626';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'white';
+                  e.currentTarget.style.color = '#6b7280';
+                }}
+              >
+                ×
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -1183,32 +1661,6 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
         </div>
       )}
 
-      {/* ================================================================== */}
-      {/* 约束关系显示（显示已建立的约束）                                     */}
-      {/* ================================================================== */}
-      {constraintRelations.length > 0 && (
-        <div style={{ marginTop: 8, fontSize: 12, color: '#475569' }}>
-          <strong>约束关系：</strong>
-          {constraintRelations.map((c, i) => (
-            <span
-              key={`constraint-${i}`}
-              style={{
-                display: 'inline-block',
-                marginRight: 8,
-                padding: '2px 6px',
-                borderRadius: 8,
-                background: '#f0fdf4',
-                color: '#166534',
-                border: '1px solid #86efac',
-              }}
-            >
-              {c.bodyName} → {c.pivotName}
-            </span>
-          ))}
-        </div>
-      )}
-
-
       {loading && <LoadingSpinner text="处理中..." />}
       <ErrorToast message={error} />
       
@@ -1218,12 +1670,23 @@ const PhysicsInputBox = forwardRef(({ animationSource }, ref) => {
         onClose={() => setShowSaveModal(false)}
         getSceneData={() => ({
           imagePreview,
+          originalImageUrl,  // 传递原始图片URL，用于封面
           imageNaturalSize,
           imagePath,
           objects: assignments,  // 动态获取最新的 assignments（包含精灵图）
           constraints: constraintRelations
         })}
       />
+
+      {/* 分享链接弹窗 */}
+      {plazaAnimationInfo && (
+        <ShareLinkModal
+          isOpen={showShareModal}
+          onClose={() => setShowShareModal(false)}
+          animationId={plazaAnimationInfo.id}
+          existingShareCode={plazaAnimationInfo.share_code}
+        />
+      )}
     </div>
   );
 });

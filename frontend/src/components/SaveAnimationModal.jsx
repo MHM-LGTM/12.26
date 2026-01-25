@@ -67,11 +67,11 @@ export default function SaveAnimationModal({ isOpen, onClose, sceneData, getScen
         hasSprites: currentSceneData?.objects?.[0]?.sprite_data_url ? '有精灵图' : '无精灵图'
       });
       
-      // 使用 imagePreview（OpenCV 处理后的图片）作为封面
-      // 注意：这可能是处理后的背景消除图，后期再优化为原图
-      const thumbnailUrl = currentSceneData?.imagePreview || null;
+      // 优先使用原始上传的图片作为封面，避免OpenCV裁剪导致的元素残缺
+      // 如果没有原始图片，则回退到处理后的图片
+      const thumbnailUrl = currentSceneData?.originalImageUrl || currentSceneData?.imagePreview || null;
       
-      console.log('[SaveAnimationModal] 封面图URL（处理后的图片）:', thumbnailUrl ? '存在' : '不存在');
+      console.log('[SaveAnimationModal] 封面图URL:', thumbnailUrl ? '存在（使用原始上传图片）' : '不存在');
       
       const response = await fetch('http://localhost:8000/api/animations', {
         method: 'POST',
@@ -358,10 +358,10 @@ export default function SaveAnimationModal({ isOpen, onClose, sceneData, getScen
         </h3>
 
         {/* 封面预览 */}
-        {getCurrentSceneData()?.imagePreview && (
+        {(getCurrentSceneData()?.originalImageUrl || getCurrentSceneData()?.imagePreview) && (
           <div style={{ marginBottom: 16, textAlign: 'center' }}>
             <img 
-              src={getCurrentSceneData().imagePreview} 
+              src={getCurrentSceneData()?.originalImageUrl || getCurrentSceneData()?.imagePreview} 
               alt="封面预览"
               style={{
                 maxWidth: '100%',
@@ -376,7 +376,7 @@ export default function SaveAnimationModal({ isOpen, onClose, sceneData, getScen
               color: '#6b7280', 
               marginTop: 8 
             }}>
-              封面预览
+              封面预览（原始上传图片）
             </p>
           </div>
         )}

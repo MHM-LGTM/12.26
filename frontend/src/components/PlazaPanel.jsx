@@ -17,6 +17,11 @@ export default function PlazaPanel({ onLoadAnimation, onPlazaAnimationLoad }) {
   const [animations, setAnimations] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedCardId, setSelectedCardId] = useState(null); // 选中的卡片ID
+  const [currentPage, setCurrentPage] = useState(0); // 当前页码
+  
+  // 分页配置：根据实际卡片宽度计算每行能放多少个，这里假设每行约6-7个卡片（140px宽度）
+  // 两行的话大约是12-14个动画
+  const ITEMS_PER_PAGE = 14; // 每页显示14个动画（2行）
 
   // 加载广场动画列表
   const loadPlazaAnimations = async () => {
@@ -39,6 +44,17 @@ export default function PlazaPanel({ onLoadAnimation, onPlazaAnimationLoad }) {
   useEffect(() => {
     loadPlazaAnimations();
   }, []);
+
+  // 重置页码当动画列表变化时
+  useEffect(() => {
+    setCurrentPage(0);
+  }, [animations.length]);
+
+  // 计算分页数据
+  const totalPages = Math.max(1, Math.ceil(animations.length / ITEMS_PER_PAGE));
+  const startIndex = currentPage * ITEMS_PER_PAGE;
+  const endIndex = startIndex + ITEMS_PER_PAGE;
+  const currentAnimations = animations.slice(startIndex, endIndex);
 
   // 点击卡片加载动画
   const handleCardClick = async (animationId) => {
@@ -80,52 +96,81 @@ export default function PlazaPanel({ onLoadAnimation, onPlazaAnimationLoad }) {
     <div style={{
       position: 'fixed',
       bottom: 20,
+      top: 560,  // 从"我的动画"区域下方开始（80 + 440 + 20）
       left: 20,
       right: 400,  // 为右侧"我的动画"面板留空间
       background: 'white',
       borderRadius: 16,
       padding: 16,
       boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-      maxHeight: 200,
-      overflowY: 'hidden'
+      display: 'flex',
+      flexDirection: 'row',
+      overflow: 'hidden'
     }}>
-      <h3 style={{
-        margin: '0 0 12px 0',
-        fontSize: 18,
-        fontWeight: 600,
-        color: '#111827'
+      {/* 左侧内容区域 */}
+      <div style={{
+        flex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        minWidth: 0,
+        overflow: 'hidden'
       }}>
-        动画广场 ({animations.length})
-      </h3>
+        <h3 style={{
+          margin: '0 0 12px 0',
+          fontSize: 18,
+          fontWeight: 600,
+          color: '#111827',
+          flexShrink: 0
+        }}>
+          动画广场 ({animations.length})
+        </h3>
 
       {loading ? (
-        <p style={{ 
-          textAlign: 'center', 
-          color: '#6b7280',
-          fontSize: 14,
-          padding: '20px 0'
+        <div style={{ 
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center'
         }}>
-          加载中...
-        </p>
+          <p style={{ 
+            textAlign: 'center', 
+            color: '#6b7280',
+            fontSize: 14,
+            margin: 0
+          }}>
+            加载中...
+          </p>
+        </div>
       ) : animations.length === 0 ? (
-        <p style={{ 
-          textAlign: 'center', 
-          color: '#6b7280', 
-          fontSize: 14,
-          padding: '20px 0'
+        <div style={{ 
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center'
         }}>
-          广场还没有动画<br/>
-          上传你的动画，成为第一个分享者吧！
-        </p>
+          <p style={{ 
+            textAlign: 'center', 
+            color: '#6b7280', 
+            fontSize: 14,
+            margin: 0,
+            lineHeight: 1.6
+          }}>
+            广场还没有动画<br/>
+            上传你的动画，成为第一个分享者吧！
+          </p>
+        </div>
       ) : (
         <div style={{
+          flex: 1,
           display: 'flex',
+          flexWrap: 'wrap',
           gap: 12,
-          overflowX: 'auto',
           overflowY: 'hidden',
-          paddingBottom: 8
+          overflowX: 'hidden',
+          alignContent: 'flex-start',
+          paddingRight: 4
         }}>
-          {animations.map((anim) => {
+          {currentAnimations.map((anim) => {
             const isSelected = selectedCardId === anim.id;
             
             return (
@@ -161,7 +206,7 @@ export default function PlazaPanel({ onLoadAnimation, onPlazaAnimationLoad }) {
               {/* 封面图 */}
               <div style={{
                 width: '100%',
-                height: 100,
+                height:50,
                 background: anim.thumbnail_url 
                   ? '#f3f4f6'
                   : 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
@@ -228,6 +273,123 @@ export default function PlazaPanel({ onLoadAnimation, onPlazaAnimationLoad }) {
             </div>
             );
           })}
+        </div>
+      )}
+      </div>
+
+      {/* 右侧分页控件 */}
+      {!loading && animations.length > ITEMS_PER_PAGE && (
+        <div style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 12,
+          paddingLeft: 16,
+          borderLeft: '1px solid #e5e7eb',
+          minWidth: 60
+        }}>
+          {/* 上一页按钮 */}
+          <button
+            onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
+            disabled={currentPage === 0}
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 8,
+              border: '1px solid #e5e7eb',
+              background: currentPage === 0 ? '#f9fafb' : 'white',
+              color: currentPage === 0 ? '#d1d5db' : '#6b7280',
+              cursor: currentPage === 0 ? 'not-allowed' : 'pointer',
+              fontSize: 18,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'all 0.2s',
+              fontWeight: 'bold'
+            }}
+            onMouseEnter={(e) => {
+              if (currentPage !== 0) {
+                e.currentTarget.style.background = '#f3f4f6';
+                e.currentTarget.style.transform = 'translateY(-2px)';
+                e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (currentPage !== 0) {
+                e.currentTarget.style.background = 'white';
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = 'none';
+              }
+            }}
+          >
+            ↑
+          </button>
+          
+          {/* 页码显示 */}
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: 4
+          }}>
+            <span style={{
+              fontSize: 14,
+              fontWeight: 600,
+              color: '#111827'
+            }}>
+              {currentPage + 1}
+            </span>
+            <div style={{
+              width: 20,
+              height: 1,
+              background: '#d1d5db'
+            }} />
+            <span style={{
+              fontSize: 14,
+              fontWeight: 600,
+              color: '#9ca3af'
+            }}>
+              {totalPages}
+            </span>
+          </div>
+          
+          {/* 下一页按钮 */}
+          <button
+            onClick={() => setCurrentPage(Math.min(totalPages - 1, currentPage + 1))}
+            disabled={currentPage >= totalPages - 1}
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 8,
+              border: '1px solid #e5e7eb',
+              background: currentPage >= totalPages - 1 ? '#f9fafb' : 'white',
+              color: currentPage >= totalPages - 1 ? '#d1d5db' : '#6b7280',
+              cursor: currentPage >= totalPages - 1 ? 'not-allowed' : 'pointer',
+              fontSize: 18,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'all 0.2s',
+              fontWeight: 'bold'
+            }}
+            onMouseEnter={(e) => {
+              if (currentPage < totalPages - 1) {
+                e.currentTarget.style.background = '#f3f4f6';
+                e.currentTarget.style.transform = 'translateY(2px)';
+                e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.1)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (currentPage < totalPages - 1) {
+                e.currentTarget.style.background = 'white';
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = 'none';
+              }
+            }}
+          >
+            ↓
+          </button>
         </div>
       )}
     </div>
